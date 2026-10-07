@@ -1,58 +1,35 @@
-id: lab4-first-user-process
-transition: lab3 -> lab4
-reason: 在监督者中断基础上创建第一个用户进程并建立用户态ecall闭环。
+lab: 4
+goal: 在Lab3中断基础上运行首个用户进程并形成ecall往返。
+requires: lab3的启动、控制台、自旋锁、物理内存、内核页表与设备中断基础。
 changes:
-- kernel/process
-- kernel/usertrap
-- kernel/memory
-- kernel/trap
-- toolchain
-required_updates:
-- target: kvm_init
-  module: kernel/memory
-  change: 在内核页表中补充TRAMPOLINE和KSTACK(0)映射。
-  reason: 用户trap切换代码与首个进程的内核栈必须在进入用户态前可访问。
-- target: interrupt_info
-  module: kernel/trap
-  change: 取消仅限trap_kernel.c内部使用的static限制，使用户trap处理能够复用中断分发结果。
-  reason: Lab3只处理kernel trap；Lab4增加usertrap后，两种入口需要共享设备和时钟中断识别逻辑。
-- target: main
-  module: kernel/boot
-  change: 在内存和内核trap初始化完成后创建首个用户进程并进入用户态。
-  reason: 首个用户进程依赖前序阶段已经建立的页表和trap环境。
-- target: cpu_t、myproc
-  module: kernel/process
-  change: 在CPU局部状态中加入当前进程指针，并提供myproc按当前hart返回运行进程；进入和离开进程上下文时同步维护该指针。
-  reason: 用户trap、页表和后续系统调用都需要从当前CPU稳定定位所属进程。
-- target: kernel.ld、Makefile
-  module: toolchain
-  change: 为trampoline建立独立且不超过一页的链接段；将initcode编译为用户二进制并转换为可被内核进程模块引用的数据，同时把trampoline、swtch和用户入口纳入构建。
-  reason: 首个用户进程依赖固定虚拟地址的trampoline和内嵌initcode；缺少该构建链无法形成可进入U-mode的镜像。
-new_invariants:
-- 进程首次运行必须经proc_return和trampoline进入U-mode
-- 用户返回必须清除SPP
-- trampoline链接段不得超过一页且内核页表与用户页表必须映射同一物理代码
-- initcode入口和内嵌字节长度必须来自同一次用户程序构建
-verification:
-- id: first-user-ecall
-  entry: user initcode main
-  setup:
-  - 构建内嵌initcode并通过make run启动。
-  steps:
-  - 首个用户进程连续执行两次SYS_helloworld。
-  - 观察从uservec进入trap_user_handler并返回用户态。
+  kernel/process:
+  - 首进程页表与上下文
+  - 当前CPU进程指针
+  - swtch与proc_return
+  kernel/usertrap:
+  - user_vector、trap_user_handler、trap_user_return、user_return
+  kernel/memory:
+  - TRAMPOLINE与KSTACK(0)
+  - 可恢复页分配和映射失败
+  kernel/boot:
+  - 初始化进程并由hart0启动
+  user/initcode:
+  - 连续两次ecall与用户循环
+  toolchain:
+  - 用户入口与内嵌代码
+  - trampoline段及新增源文件构建
+acceptance:
+- scenario: 首进程ecall往返
+  input: 以HARTS=2启动默认用户入口
   expected:
-  - 控制台出现两次proczero hello world语义的输出。
-  - 每次ecall后用户PC前进4字节，不会重复执行同一ecall。
-  - 返回后仍在U-mode运行且无SPP错误。
-- id: user-mode-interrupts
-  entry: trap_user_handler
-  setup:
-  - 让initcode在用户态持续循环。
-  steps:
-  - 等待多个时钟周期。
-  - 在控制台输入普通字符、退格和换行。
+  - 出现两次proczero hello world
+  - 用户调用都返回0且继续循环，ecall不重复执行
+- scenario: 用户执行期间中断
+  input: 用户循环期间等待时钟并向UART输入普通字符、退格和换行
   expected:
-  - 用户态执行期间时钟中断能进入内核并正常返回。
-  - UART输入仍能回显。
-  - 中断处理后用户寄存器、PC和栈保持可继续执行。
+  - 时钟继续推进，UART按console契约回显
+  - 中断后用户PC、寄存器和栈保持可继续执行
+- scenario: 未知调用与用户异常
+  input: 临时用户场景发起未知号及访问零页
+  expected:
+  - 未知号返回-1，用户零页错误停止故障执行而不panic

@@ -1,144 +1,20 @@
-id: user/initcode
 module: user/initcode
-purpose: 构建首个用户程序并提供RISC-V系统调用封装，生成可由内核进程模块装载的initcode字节数组。
 owns:
-  - src/user/initcode.c
-  - src/user/initcode.h
-  - src/user/sys.h
-  - src/user/syscall_arch.h
-  - src/user/syscall_num.h
+- src/user/initcode.c
+- src/user/sys.h
+- src/user/syscall_arch.h
+- src/user/syscall_num.h
+rules:
+- 用户调用通过 ecall，a7 为调用号、a0..a5 为参数、a0 为结果；内联汇编声明内存影响。
+- SYS_helloworld=0；main 明确位于 USER_BASE，不能依赖编译器函数排列。
 functions:
-  - name: main
-    comment:
-      purpose: 首个用户程序入口，连续执行两次SYS_helloworld后保持在用户态运行。
-      input:
-        - 无显式参数。
-      output: 不返回。
-    pre:
-      - USER_BASE已映射为用户可执行页面。
+  long helloworld(void):
+    effects:
+    - 发起系统调用。
     post:
-      - 两次ecall均通过用户trap进入内核并返回U-mode。
-    errors:
-      - 用户页表或trap入口无效时由内核trap处理。
-  - name: __syscall0
-    comment:
-      purpose: 按RISC-V ABI将系统调用号放入a7并执行ecall，不传递普通参数。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
+    - 经 ecall 发起 SYS_helloworld，返回内核结果。
+  int main(void):
+    effects:
+    - 发起两次系统调用。
     post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall1
-    comment:
-      purpose: 使用a0传递1个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-        - a（long）：参数1。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall2
-    comment:
-      purpose: 使用a0至a1传递2个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall3
-    comment:
-      purpose: 使用a0至a2传递3个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall4
-    comment:
-      purpose: 使用a0至a3传递4个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall5
-    comment:
-      purpose: 使用a0至a4传递5个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall6
-    comment:
-      purpose: 使用a0至a5传递6个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-interface:
-  - name: initcode-image
-    pre:
-      - initcode.c已成功编译并转换为二进制。
-    post:
-      - src/user/initcode.h定义initcode数组和initcode_len。
-    errors:
-      - initcode超过一页时内核拒绝创建首进程。
-properties:
-  - id: syscall-abi
-    text: 系统调用号使用a7，参数依次使用a0至a5，返回值使用a0。
-  - id: generated-image
-    text: initcode.h必须由当前initcode.c的同一次构建生成。
-state:
-  stage: user-program
-  owned_state:
-    - initcode字节数组和系统调用ABI声明
-  resource_lifetime:
-    - initcode数组随内核镜像存在
-preconditions:
-  - RISC-V用户程序工具链可用
-postconditions:
-  - kernel/process可通过extern引用initcode和initcode_len
-invariants:
-  - id: one-page-initcode
-    text: initcode字节数必须大于0且不超过PAGE_SIZE。
-  - id: system-abi
-    text: syscall_num.h中的系统调用号必须与参考实现和内核分发表完全一致，禁止自行编号。
-    syscall_numbers:
-      SYS_helloworld: 0
-dependencies:
-  - toolchain
-rely:
-  - RISC-V ecall和函数调用ABI
-guarantee:
-  - 为首进程提供与用户源码一致的可执行字节数组
-algorithm_intent: 将initcode.c编译为平坦二进制，再生成initcode.h字符数组供内核链接和装载。
+    - 连续两次调用 helloworld 后保持用户态循环，供时钟和 UART 中断恢复；两次调用均返回0，不返回。

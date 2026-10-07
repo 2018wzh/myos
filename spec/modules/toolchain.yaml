@@ -1,36 +1,33 @@
-id: toolchain
 module: toolchain
-purpose: 用Makefile将C、汇编和链接脚本投影为可启动内核。
 owns:
-  - Makefile
-  - common.mk
-functions: []
-interface:
-  - name: build
-    pre:
-      - POSIX make/sh和riscv64-linux-gnu工具链存在
-    post:
-      - 生成kernel-qemu.elf
-    errors:
-      - 编译、链接或工具链失败时停止
-properties:
-  - id: freestanding-build
-    text: 编译使用freestanding、medany、无标准库配置。
+- Makefile
+- common.mk
+- kernel.ld
+- user.ld
 state:
-  stage: build
-  owned_state:
-    - target/kernel目标文件
-  resource_lifetime:
-    - target目录可由clean删除
-preconditions:
-  - 工具链前缀与common.mk一致
-postconditions:
-  - QEMU可加载链接后的内核
-invariants:
-  - 链接入口和内核地址由kernel.ld唯一决定
-dependencies: []
-rely:
-  - GCC、binutils、QEMU
-guarantee:
-  - 为boot提供可重复构建命令
-algorithm_intent: 使用wildcard收集内核源文件并按目录映射目标文件。
+  target: 按 HARTS/TIMER_INTERVAL 区分的目标文件与依赖，生成头文件同样位于构建目录，不修改源码树。
+rules:
+- 使用 freestanding RV64GC/lp64d C 与汇编，不链接宿主标准库；HARTS 仅1或2，默认2。
+- 入口 _entry=0x80000000；trampoline 单独页对齐且不超过4096字节；内核不得超过128MiB物理内存。
+- 用户 main 使用显式入口段及链接脚本从 USER_BASE=0x1000 开始；无编译优化或重排参数依赖。
+targets:
+  all:
+    pre:
+    - POSIX make/sh、RISC-V GCC/binutils、xxd 可用。
+    effects:
+    - 构建用户ELF、二进制与内嵌数据，编译内核并链接。
+    post:
+    - 生成可由 QEMU 加载的 kernel-qemu.elf；编译或链接失败停止并返回非零。
+    - 内嵌 initcode 及长度来自本次用户二进制；C/汇编/头文件变化触发相关目标增量重建。
+  run:
+    pre:
+    - qemu-system-riscv64 可用。
+    effects:
+    - 先构建镜像，再启动 QEMU。
+    post:
+    - 用 QEMU virt、128MiB内存、-bios none、所选 HARTS 启动该镜像，串口连接标准输入输出。
+  clean:
+    effects:
+    - 移除 target 与根目录生成镜像。
+    post:
+    - 删除本仓库构建产物，保留源码、规格和无关文件。

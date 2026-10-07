@@ -1,113 +1,40 @@
-id: kernel/usertrap
 module: kernel/usertrap
-purpose: 在U-mode和S-mode之间保存用户状态、处理ecall并安全返回。
 owns:
-  - src/kernel/trap/trap_user.c
-  - src/kernel/trap/trampoline.S
-functions:
-  - name: trap_user_handler
-    comment:
-      purpose: '在user_vector()里面调用；用户态trap处理的核心逻辑；参考 xv6: kernel/trap.c usertrap()。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-      - 调用者必须满足源码assert检查的锁、类型或状态条件。
-    post:
-      - '在user_vector()里面调用；用户态trap处理的核心逻辑；参考 xv6: kernel/trap.c usertrap()。'
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-      - 源码断言不成立时触发assert诊断。
-  - name: trap_user_return
-    comment:
-      purpose: '调用user_return()；内核态返回用户态；参考 xv6: kernel/trap.c usertrapret()。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 内核态返回用户态。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - '调用user_return()；内核态返回用户态；参考 xv6: kernel/trap.c usertrapret()。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: trampoline
-    comment:
-      purpose: trampoline会作为一个物理页的起点地址。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - trampoline会作为一个物理页的起点地址。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: user_vector
-    comment:
-      purpose: 触发用户态trap后的处理过程。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 触发用户态trap后的处理过程。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: user_return
-    comment:
-      purpose: 用户态trap处理完成后返回。
-      input:
-        - trapframe（寄存器参数）：user_return使用的trapframe参数。
-        - pagetable（寄存器参数）：待切换或访问的页表。
-      output: 用户态trap处理完成后返回。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 用户态trap处理完成后返回。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: trap_user_handler
-    pre:
-      - 当前进程有合法trapframe且来自U-mode
-    post:
-      - ecall推进sepc并完成helloworld分发，随后准备返回
-    errors:
-      - 未知异常输出scause/sepc/stval并终止当前进程
-  - name: trap_user_return
-    pre:
-      - trapframe和用户页表有效
-    post:
-      - SPP清零、SPIE置位，trampoline恢复寄存器并sret
-    errors:
-      - 状态无效时不执行sret
-properties:
-  - id: ecall-advance
-    text: 用户ecall返回地址增加4。
-  - id: trampoline-boundary
-    text: 用户trap入口位于TRAMPOLINE并在切换页表后恢复用户寄存器。
+- src/kernel/trap/trap_user.c
+- src/kernel/trap/trampoline.S
 state:
-  stage: user-mode-entry
-  owned_state:
-    - user trapframe、user sepc、satp字段
-  resource_lifetime:
-    - trapframe随进程存活
-preconditions:
-  - kernel trap入口已安装
-postconditions:
-  - initcode在U-mode继续执行
-invariants:
-  - id: privilege-clear
-    text: 返回用户态前必须清除SPP并设置SPIE。
-dependencies:
-  - kernel/process
-  - kernel/memory
-  - kernel/trap
-  - user/initcode
-rely:
-  - RISC-V sret语义和TRAMPOLINE映射
-guarantee:
-  - 用户代码不能直接绕过trapframe进入内核
-algorithm_intent: 使用trampoline在用户页表和内核页表之间切换，并由C处理用户trap。
+  trampoline: 页对齐共享代码，内核和用户页表在 TRAMPOLINE 映射同一物理页；段长不超过一页。
+  TRAPFRAME: 当前进程用户页表中的非用户 RW 映射；布局由 proc/type.h 固定。
+rules:
+- 切换 satp 前后均在同一 TRAMPOLINE 虚拟地址执行并刷新 TLB；用户寄存器保存和恢复不得混用页表。
+- 未知系统调用返回 -1；用户执行错误停止故障进程，不触发内核 panic；内核状态矛盾才 panic。
+functions:
+  user_vector:
+    pre:
+    - 来自 U-mode，sscratch/TRAPFRAME 和双页表 trampoline 映射有效。
+    effects:
+    - 写 trapframe，改变 satp、栈、hart 标识和控制流。
+    post:
+    - 完整保存用户整数寄存器到 TRAPFRAME，恢复内核 sp/tp，切换到 kernel_satp，再进入 kernel_trap。
+  void trap_user_handler(void):
+    effects:
+    - 更新当前 trapframe、处理设备/时钟中断及系统调用输出，修改当前 hart trap CSR。
+    post:
+    - 保存 sepc，立即将 stvec 切回 kernel_vector。
+    - ecall 只推进 epc 4 字节一次；SYS_helloworld 输出进程名和 hello world，a0=0；未知号 a0=-1。
+    - 已识别设备/时钟中断处理后继续原用户指令；其他异常输出原因和地址，停止当前用户执行，并保持其他 hart 可处理中断。
+    - 可继续的执行经 trap_user_return 恢复用户态。
+  void trap_user_return(void):
+    pre:
+    - 当前进程、trapframe、用户页表和独立内核栈有效。
+    effects:
+    - 写当前 hart CSR 和 trapframe 内核字段，切换页表与特权级。
+    post:
+    - 关闭中断后设置用户向量和 trapframe 内核字段；清除 SPP、设置 SPIE、恢复 epc，经 user_return 返回 U-mode，不返回 C 调用者。
+  user_return:
+    pre:
+    - SPP 已清零，sepc 和 SPIE 已准备；trampoline 在两套页表均可执行。
+    effects:
+    - 修改 satp/sscratch，恢复整数寄存器和用户执行流。
+    post:
+    - a0 为 TRAPFRAME，a1 为用户 satp；切换页表、刷新 TLB，完整恢复用户寄存器，以 sret 进入已准备的用户 PC。

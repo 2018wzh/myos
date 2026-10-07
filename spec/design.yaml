@@ -1,38 +1,18 @@
-system:
-  name: xv6实验系统-Lab4
-  language: C与RISC-V汇编
-  isa: RV64GC
+system: RV64GC 单体教学内核：Lab4 首个用户进程与用户陷入闭环。
 machine:
-  qemu:
-    model: virt
-    harts:
-      default: 2
-      configurable: true
-      policy: 所有实验均须允许通过构建参数选择hart数量，未指定时启动2个hart。
-  hardware:
-    board: QEMU virt
-    status: 已验证首个用户进程进入U-mode并触发ecall
-kernel:
-  organization: 单体式教学内核
-  execution: 调度器运行首个进程并通过trampoline进出用户态
-  protection: 每进程页表和trapframe隔离
-  communication: user ecall、时钟中断和UART
-  resource_model: proc拥有页表、trapframe、内核栈和状态
-required_mechanisms:
-  - 多进程结构
-  - 上下文切换
-  - 每进程内核栈
-  - 首个用户地址空间
-  - trampoline uservec/userret
-  - user ecall
-composition_invariants:
-  - 用户页表只公开用户映射
-  - trapframe在切换前已映射
-  - 新进程首次运行从proc_return进入用户态
-non_goals:
-  - fork/wait完整生命周期和文件系统
-hardware_port:
   board: QEMU virt
-  boot: 扩展kernel.ld支持trampsec
-  console: QEMU UART
-  interrupt: timer/PLIC沿用Lab3
+  memory: 128MiB
+  harts: HARTS=1或2，默认2；hart0创建唯一用户进程。
+mechanisms:
+- Sv39内核/用户页表
+- 独立内核栈与trapframe
+- swtch和trampoline
+- 用户ecall、CLINT时钟和PLIC/UART中断
+rules:
+- 各模块契约共同约束系统；头文件提供类型与ABI，不能替代行为契约。
+- 用户零页不映射；用户页表不暴露内核可写资源。
+- 先建立内存和trap环境，再发布首进程；其他hart只在共享初始化发布后访问共享模块。
+non_goals:
+- 多进程调度和完整fork/wait/exit生命周期
+- 文件系统与块设备
+- 首进程故障后重启或重建用户执行

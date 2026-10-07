@@ -1,95 +1,64 @@
-id: kernel/process
 module: kernel/process
-purpose: 创建进程控制块、首个用户进程和上下文切换基础。
 owns:
-  - src/kernel/proc/proc.c
-  - src/kernel/proc/swtch.S
-  - src/kernel/proc/type.h
-  - src/kernel/proc/method.h
-functions:
-  - name: proc_pgtbl_init
-    comment:
-      purpose: '获得一个初始化过的用户页表；完成trapframe和trampoline的映射；参考 xv6: kernel/proc.c proc_pagetable()。'
-      input:
-        - trapframe（uint64）：proc_pgtbl_init使用的trapframe参数。
-      output: 返回pgtbl_t类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - '获得一个初始化过的用户页表；完成trapframe和trampoline的映射；参考 xv6: kernel/proc.c proc_pagetable()。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_make_first
-    comment:
-      purpose: '第一个用户态进程的创建；它的代码和数据位于initcode.h的initcode数组；第一个进程的用户地址空间布局:；trapoline   (1 page)；trapframe   (1 page)；ustack      (1
-        page)；.......；<--heap_top；code + data (1 page)；empty space (1 page) 最低的4096字节 不分配物理页，同时不可访问；注意: 用用户空间的地址映射需要标记 PTE_U；完成首进程上下文初始化后，proc_make_first直接调用swtch切换到新进程；参考
-        xv6: kernel/proc.c userinit() + allocproc()。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - '第一个用户态进程的创建；它的代码和数据位于initcode.h的initcode数组；第一个进程的用户地址空间布局:；trapoline   (1 page)；trapframe   (1 page)；ustack      (1
-        page)；.......；<--heap_top；code + data (1 page)；empty space (1 page) 最低的4096字节 不分配物理页，同时不可访问；注意: 用用户空间的地址映射需要标记 PTE_U；参考
-        xv6: kernel/proc.c userinit() + allocproc()。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: swtch
-    comment:
-      purpose: context上下文切换。
-      input:
-        - old（context_t *）：需要保存的旧上下文。
-        - new（context_t *）：需要恢复的新上下文。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - context上下文切换。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: proc_make_first
-    pre:
-      - 内存和内核trap已初始化，initcode可用
-    post:
-      - proczero拥有用户页表、trapframe、用户栈和代码页
-    errors:
-      - 任一资源分配失败释放已分配资源
-  - name: swtch
-    pre:
-      - 两个context合法
-    post:
-      - 保存当前callee-saved寄存器并恢复目标上下文
-    errors:
-      - 空context禁止切换
-properties:
-  - id: kernel-stack-isolation
-    text: 每个进程使用独立KSTACK(i)。
-  - id: first-process
-    text: proczero从USER_BASE加载initcode并设置用户入口。
+- src/kernel/proc/proc.c
+- src/kernel/proc/swtch.S
+- src/kernel/proc/type.h
+- src/kernel/proc/method.h
 state:
-  stage: process-creation
-  owned_state:
-    - proc_list、proczero、context、trapframe
-  resource_lifetime:
-    - proc释放时回收页表、trapframe和内核栈
-preconditions:
-  - Lab3 trap和Lab2内存已完成
-postconditions:
-  - 调度器可首次切入用户进程
-invariants:
-  - id: proc-lock
-    text: 进程状态和上下文修改受proc锁保护。
-  - id: user-private
-    text: 用户页表不携带内核可写映射。
-dependencies:
-  - kernel/memory
-  - kernel/trap
-  - kernel/lock
-  - user/initcode
-rely:
-  - initcode ELF/字节数组和trampoline布局
-guarantee:
-  - 向usertrap提供当前进程和trapframe
-algorithm_intent: 参照xv6 allocproc/userinit建立proczero，并用swtch完成上下文切换。
+  cpus: 每 hart 的当前进程指针与保存的内核上下文；tp 索引，有效范围由 MAX_HARTS 定义。
+  proczero: 唯一用户进程，拥有用户页表、trapframe、用户代码页和栈页；使用预先映射的 KSTACK(0)。
+  context_t: 依次为 ra、sp、s0..s11 的 64 位槽；C 与 swtch 汇编布局一致。
+  user_trapframe_t: 288 字节：前五槽为 kernel_satp/kernel_sp/kernel_trap/epc/kernel_hartid，其后按给定头文件排列全部用户整数寄存器；a0
+    偏移112，t6偏移280。
+rules:
+- 首进程构造完成前不得发布为运行状态；失败不留下半初始化进程。
+- 虚拟地址零页不映射；TRAMPOLINE RX 和 TRAPFRAME RW 不含 PTE_U；用户代码 RXU、栈 RWU。
+- 本阶段不引入多进程 scheduler；首进程通过 swtch 与 proc_return 首次进入用户态。
+functions:
+  cpu_t *mycpu(void):
+    effects: []
+    post:
+    - 返回 tp 对应的 cpus 元素；无效 hart id 是内核不变量错误。
+  proc_t *myproc(void):
+    effects:
+    - 经 push_off/pop_off 读取当前进程。
+    post:
+    - 返回当前 hart 的进程指针，允许 NULL；返回时恢复本次关中断嵌套。
+  void proc_init(void):
+    pre:
+    - 尚无运行用户进程。
+    effects:
+    - 初始化进程与 CPU 状态。
+    post:
+    - 初始化 cpus 和 proczero 锁、名称及 UNUSED 状态。
+  pgtbl_t proc_pgtbl_init(uint64 trapframe):
+    pre:
+    - trapframe 是调用者独占的已分配页且页对齐。
+    effects:
+    - 分配内核页表页，创建两项系统映射。
+    post:
+    - 成功返回零初始化根页表，映射共享 trampoline 与给定 trapframe；两者均不可由用户访问。
+    - 不足返回 NULL，回收本次页表页，保留调用者 trapframe 和共享 trampoline。
+  void proc_make_first(void):
+    pre:
+    - 内存、内核页表、trap 和 proc_init 已完成；仅 hart 0 调用一次。
+    effects:
+    - 分配首进程资源，更新页表、上下文和当前进程，切换执行流。
+    post:
+    - 成功从同次构建的 initcode 加载不超过一页的代码到 USER_BASE，建立 USER_STACK，epc=USER_BASE、sp=USER_STACK_TOP。
+    - 初始化上下文 ra=proc_return、sp=KSTACK(0)+PAGE_SIZE；持进程锁发布 RUNNING 和当前 CPU 指针后 swtch。
+    - 分配或映射不足回收已分配用户页、trapframe和页表，恢复 UNUSED、释放锁，留在可处理中断的内核循环，不进入用户态、不返回。
+  void proc_return(void):
+    pre:
+    - 当前进程已经 RUNNING，当前 hart 持有其锁。
+    effects:
+    - 结束首进程锁的本次关中断嵌套，进入用户态。
+    post:
+    - 释放交接的进程锁，调用 trap_user_return，不返回。
+  void swtch(context_t *old, context_t *new):
+    pre:
+    - old/new 是互不重叠的可读写有效 context_t；目标 sp/ra 有效。
+    effects:
+    - 写 old 上下文，替换当前寄存器和控制流。
+    post:
+    - 保存当前 ra/sp/s0..s11 到 old，恢复 new 对应寄存器，经恢复的 ra 继续；old 将来被恢复时，本次调用才继续返回。

@@ -7,6 +7,10 @@
 #define HART_COUNT 2
 #endif
 
+#if HART_COUNT != 1 && HART_COUNT != 2
+#error HART_COUNT must be 1 or 2
+#endif
+
 #define NCPU HART_COUNT
 #define MAX_HARTS NCPU
 

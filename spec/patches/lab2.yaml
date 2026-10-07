@@ -1,38 +1,14 @@
-id: lab2-memory-bootstrap
-transition: lab1 -> lab2
-reason: 在启动闭环上增加物理内存管理和内核虚拟地址空间。
+lab: 2
+goal: 在启动闭环上增加物理内存管理和内核虚拟地址空间。
+requires: lab1
 changes:
 - kernel/memory
 - kernel/boot
 - toolchain
-required_updates:
-- target: main
-  module: kernel/boot
-  change: 在早期启动流程中依次完成打印、物理内存、内核页表初始化，并在继续执行前激活Sv39页表。
-  reason: Lab2的内存模块必须在任何页分配和虚拟地址访问发生前建立。
-- target: printf
-  module: kernel/console
-  change: 恢复并保持print_lk对一次完整格式化输出的串行化保护，锁必须覆盖变参解析和逐字符发送全过程。
-  reason: Lab2开始在多hart启动和内存初始化阶段并发输出；缺少整段输出锁会导致字符交错。
-- target: kernel.ld
-  module: toolchain
-  change: 以KERNEL_DATA标记只读代码结束位置，将ALLOC_BEGIN按页对齐放在内核镜像之后，并把ALLOC_END设置为可管理物理内存上界。
-  reason: 物理页分配器和内核页表必须共享准确、页对齐且不覆盖内核镜像的内存边界。
-- target: Makefile
-  module: toolchain
-  change: 创建并纳入kernel/mem与kernel/trap构建输出目录，使新增内存代码和相关类型能够进入内核ELF。
-  reason: 只编写内存模块而未接入构建图会导致最终镜像缺少实现或输出目录创建失败。
-new_invariants:
-- boot必须按物理分配器、页表构造、页表激活的顺序执行
-- 映射权限不得扩大内核代码权限
-- ALLOC_BEGIN必须页对齐且不早于内核镜像结束位置
-- 一次printf调用的字符序列不得与其他hart的printf交错
-verification:
-- id: physical-page-lifecycle
-  entry: test_case_2
-  setup:
+acceptance:
+- scenario: physical-page-lifecycle
+  input:
   - 在pmem_init完成后调用test_case_2。
-  steps:
   - 申请10个用户物理页并写入非零数据。
   - 检查可分配页计数减少10。
   - 释放全部页面并检查计数恢复。
@@ -41,11 +17,9 @@ verification:
   - 所有地址位于用户物理内存区域且页对齐。
   - 释放前后allocable计数与预期一致。
   - 重新分配页面内容全为0，并输出test_case_2 passed。
-- id: kernel-page-table-map-unmap
-  entry: test_mapping_and_unmapping
-  setup:
+- scenario: kernel-page-table-map-unmap
+  input:
   - 完成print_init、pmem_init和kvm初始化后执行。
-  steps:
   - 在临时页表中分别建立可读写映射和只读映射。
   - 通过vm_getpte核对PTE有效位、物理地址和权限。
   - 调用vm_unmappages并再次读取PTE。

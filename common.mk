@@ -6,9 +6,10 @@ OBJCOPY := $(TOOLPREFIX)objcopy
 OBJDUMP := $(TOOLPREFIX)objdump
 
 QEMU ?= qemu-system-riscv64
+XXD ?= xxd
 
 CFLAGS := -std=gnu11 -Wall -Wextra -Werror -O2 -g -ffreestanding -fno-common \
-	-fno-builtin -fno-omit-frame-pointer -fno-pie -fno-stack-protector \
-	-mcmodel=medany -march=rv64gc -mabi=lp64d -nostdlib -nostartfiles \
-	-I src/kernel
-LDFLAGS := -T kernel.ld -z max-page-size=4096
+	-fno-builtin -fno-omit-frame-pointer -mcmodel=medany -march=rv64gc \
+	-mabi=lp64d -mno-relax -msmall-data-limit=0 -fno-pie -fno-pic \
+	-fno-stack-protector -nostdlib -nostartfiles -I src/kernel
+LDFLAGS := -z max-page-size=4096 --no-relax

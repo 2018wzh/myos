@@ -21,4 +21,4 @@ _entry:
 .align 12
 .globl boot_stacks
 boot_stacks:
-        .space 4096 * 8
+        .space 4096 * HART_COUNT

@@ -14,6 +14,14 @@ void init(void)
   proc_init();
 }
 
+static void idle_forever(void) __attribute__((noreturn));
+
+static void idle_forever(void)
+{
+  for (;;)
+    asm volatile("wfi");
+}
+
 int main(void)
 {
   uint64 id = hart_id();
@@ -36,6 +44,5 @@ int main(void)
     trap_kernel_inithart();
     printf("lab4 hart %d ready\n", (int)id);
   }
-  for (;;)
-    ;
+  idle_forever();
 }
