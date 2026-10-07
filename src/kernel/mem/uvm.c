@@ -1,37 +1,45 @@
 #include "method.h"
+#include "../arch/method.h"
 #include "../lib/method.h"
 
-static int user_page_pa(pgtbl_t pgtbl, uint64 va, int required)
+static bool is_leaf(pte_t pte)
 {
-  if (pgtbl == NULL || va >= VA_MAX)
-    return -1;
-  pte_t *pte = vm_getpte(pgtbl, va, false);
-  if (pte == NULL || (*pte & (PTE_V | PTE_U)) != (PTE_V | PTE_U) ||
-      (*pte & required) != (uint64)required)
-    return -1;
-  return 0;
+  return (pte & (PTE_R | PTE_W | PTE_X)) != 0;
 }
 
-static uint64 translated_pa(pgtbl_t pgtbl, uint64 va)
+static pte_t *user_pte(pgtbl_t pgtbl, uint64 va, int access)
 {
+  if (va >= TRAPFRAME)
+    return NULL;
   pte_t *pte = vm_getpte(pgtbl, va, false);
-  return PTE_TO_PA(*pte) + (va & PAGE_MASK);
+  if (pte == NULL || (*pte & (PTE_V | PTE_U)) != (PTE_V | PTE_U) ||
+      !is_leaf(*pte) || (*pte & (uint64)access) != (uint64)access ||
+      ((*pte & PTE_W) != 0 && (*pte & PTE_R) == 0))
+    return NULL;
+  return pte;
+}
+
+static bool user_range(uint64 begin, uint64 len)
+{
+  return begin < VA_MAX && len <= VA_MAX - begin;
 }
 
 int uvm_copyin(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 {
-  if (len != 0 && (src >= VA_MAX || (uint64)len > VA_MAX - src))
+  if (len == 0)
+    return 0;
+  if (!user_range(src, len))
     return -1;
-  while (len != 0)
-  {
-    if (user_page_pa(pgtbl, src, PTE_R) < 0)
+  while (len != 0) {
+    pte_t *pte = user_pte(pgtbl, src, PTE_R);
+    if (pte == NULL)
       return -1;
-    uint32 n = (uint32)(PAGE_SIZE - (src & PAGE_MASK));
+    uint32 n = PAGE_SIZE - (src & PAGE_MASK);
     if (n > len)
       n = len;
-    memmove((void *)dst, (void *)translated_pa(pgtbl, src), n);
-    dst += n;
+    memmove((void *)dst, (void *)(PTE_TO_PA(*pte) + (src & PAGE_MASK)), n);
     src += n;
+    dst += n;
     len -= n;
   }
   return 0;
@@ -39,18 +47,20 @@ int uvm_copyin(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 
 int uvm_copyout(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 {
-  if (len != 0 && (dst >= VA_MAX || (uint64)len > VA_MAX - dst))
+  if (len == 0)
+    return 0;
+  if (!user_range(dst, len))
     return -1;
-  while (len != 0)
-  {
-    if (user_page_pa(pgtbl, dst, PTE_W) < 0)
+  while (len != 0) {
+    pte_t *pte = user_pte(pgtbl, dst, PTE_W);
+    if (pte == NULL)
       return -1;
-    uint32 n = (uint32)(PAGE_SIZE - (dst & PAGE_MASK));
+    uint32 n = PAGE_SIZE - (dst & PAGE_MASK);
     if (n > len)
       n = len;
-    memmove((void *)translated_pa(pgtbl, dst), (void *)src, n);
-    dst += n;
+    memmove((void *)(PTE_TO_PA(*pte) + (dst & PAGE_MASK)), (void *)src, n);
     src += n;
+    dst += n;
     len -= n;
   }
   return 0;
@@ -58,105 +68,163 @@ int uvm_copyout(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len)
 
 int uvm_copyin_str(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 maxlen)
 {
-  char *out = (char *)dst;
-  for (uint32 copied = 0; copied < maxlen; ++copied, ++src)
-  {
-    if (src >= VA_MAX || user_page_pa(pgtbl, src, PTE_R) < 0)
+  while (maxlen != 0) {
+    pte_t *pte = user_pte(pgtbl, src, PTE_R);
+    if (pte == NULL)
       return -1;
-    char c = *(char *)translated_pa(pgtbl, src);
-    out[copied] = c;
-    if (c == '\0')
-      return 0;
+    uint32 n = PAGE_SIZE - (src & PAGE_MASK);
+    if (n > maxlen)
+      n = maxlen;
+    const char *from = (const char *)(PTE_TO_PA(*pte) + (src & PAGE_MASK));
+    for (uint32 i = 0; i < n; ++i) {
+      char c = from[i];
+      *(char *)dst++ = c;
+      if (c == '\0')
+        return 0;
+    }
+    src += n;
+    maxlen -= n;
   }
   return -1;
 }
 
+/* Build new leaves off to the side. The published tree is never used to
+ * allocate intermediate tables, so every failed attempt is self-contained. */
+static int stage_pages(pgtbl_t staged, pgtbl_t target, pgtbl_t source,
+                       uint64 begin, uint64 end)
+{
+  for (uint64 va = begin; va < end; va += PAGE_SIZE) {
+    pte_t *occupied = vm_getpte(target, va, false);
+    if (occupied != NULL && (*occupied & PTE_V) != 0)
+      return -1;
+
+    pte_t flags = PTE_V | PTE_R | PTE_W | PTE_U;
+    pte_t *original = NULL;
+    if (source != NULL) {
+      original = user_pte(source, va, 0);
+      if (original == NULL)
+        return -1;
+      flags = PTE_FLAGS(*original);
+    }
+    uint64 page = pmem_alloc(false);
+    if (page == 0)
+      return -1;
+    if (original != NULL)
+      memmove((void *)page, (void *)PTE_TO_PA(*original), PAGE_SIZE);
+    int perm = flags & (PTE_R | PTE_W | PTE_X | PTE_U);
+    if (vm_mappages(staged, va, page, PAGE_SIZE, perm) < 0) {
+      pmem_free(page, false);
+      return -1;
+    }
+    *vm_getpte(staged, va, false) = PA_TO_PTE(page) | flags;
+  }
+  return 0;
+}
+
+/* Every destination leaf was checked before this allocation-free commit.
+ * Transfer missing subtrees wholesale; shared paths retain their old tables. */
+static void publish_pages(pgtbl_t target, pgtbl_t staged, int level)
+{
+  for (int i = 0; i < 512; ++i) {
+    pte_t entry = staged[i];
+    if ((entry & PTE_V) == 0)
+      continue;
+    if ((target[i] & PTE_V) == 0) {
+      target[i] = entry;
+      staged[i] = 0;
+    } else {
+      if (level == 0 || is_leaf(entry) || is_leaf(target[i]))
+        panic("uvm publish overlap");
+      publish_pages((pgtbl_t)PTE_TO_PA(target[i]),
+                    (pgtbl_t)PTE_TO_PA(entry), level - 1);
+    }
+  }
+}
+
+static int grow_pages(pgtbl_t pgtbl, uint64 begin, uint64 end)
+{
+  if (begin == end)
+    return 0;
+  pgtbl_t staged = (pgtbl_t)pmem_alloc(true);
+  if (staged == NULL)
+    return -1;
+  if (stage_pages(staged, pgtbl, NULL, begin, end) < 0) {
+    uvm_destroy_pgtbl(staged);
+    return -1;
+  }
+  publish_pages(pgtbl, staged, 2);
+  sfence_vma();
+  vm_freewalk(staged);
+  return 0;
+}
+
 uint64 uvm_heap_grow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len)
 {
-  if (cur_heap_top < USER_HEAP_BASE || cur_heap_top > MMAP_BEGIN ||
-      (uint64)len > MMAP_BEGIN - cur_heap_top)
+  if (pgtbl == NULL || cur_heap_top < USER_HEAP_BASE ||
+      cur_heap_top > MMAP_BEGIN || len > MMAP_BEGIN - cur_heap_top)
     return (uint64)-1;
-  uint64 new_top = cur_heap_top + len;
-  uint64 begin = PGROUNDUP(cur_heap_top);
-  uint64 end = PGROUNDUP(new_top);
-  uint64 va;
-  for (va = begin; va < end; va += PAGE_SIZE)
-  {
-    uint64 pa = pmem_try_alloc(false);
-    if (pa == 0)
-      break;
-    vm_mappages(pgtbl, va, pa, PAGE_SIZE, PTE_R | PTE_W | PTE_U);
-  }
-  if (va != end)
-  {
-    if (va > begin)
-      vm_unmappages(pgtbl, begin, va - begin, true);
+  uint64 top = cur_heap_top + len;
+  if (grow_pages(pgtbl, PGROUNDUP(cur_heap_top), PGROUNDUP(top)) < 0)
     return (uint64)-1;
-  }
-  return new_top;
+  return top;
 }
 
 uint64 uvm_heap_ungrow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len)
 {
-  if (cur_heap_top < USER_HEAP_BASE || (uint64)len >
-      cur_heap_top - USER_HEAP_BASE)
+  if (pgtbl == NULL || cur_heap_top < USER_HEAP_BASE ||
+      cur_heap_top > MMAP_BEGIN || len > cur_heap_top - USER_HEAP_BASE)
     return (uint64)-1;
-  uint64 new_top = cur_heap_top - len;
-  uint64 begin = PGROUNDUP(new_top);
+  uint64 top = cur_heap_top - len;
+  uint64 begin = PGROUNDUP(top);
   uint64 end = PGROUNDUP(cur_heap_top);
-  if (begin < end)
-    vm_unmappages(pgtbl, begin, end - begin, true);
-  return new_top;
+  for (uint64 va = begin; va < end; va += PAGE_SIZE)
+    if (user_pte(pgtbl, va, PTE_R | PTE_W) == NULL)
+      panic("uvm heap metadata mismatch");
+  for (uint64 va = begin; va < end; va += PAGE_SIZE) {
+    uint64 page = PTE_TO_PA(*vm_getpte(pgtbl, va, false));
+    vm_unmappages(pgtbl, va, PAGE_SIZE, false);
+    sfence_vma();
+    pmem_free(page, check_inkernel(page));
+  }
+  return top;
 }
 
 int64 uvm_ustack_grow(pgtbl_t pgtbl, uint64 old_ustack_npage,
                       uint64 fault_addr)
 {
-  if (old_ustack_npage == 0 || old_ustack_npage >
-      (USER_STACK_TOP - USER_STACK_BOTTOM) / PAGE_SIZE ||
-      fault_addr >= USER_STACK_TOP)
+  if (pgtbl == NULL ||
+      old_ustack_npage > (USER_STACK_TOP - USER_STACK_BOTTOM) / PAGE_SIZE)
     return -1;
-  uint64 old_bottom = USER_STACK_TOP - old_ustack_npage * PAGE_SIZE;
-  uint64 new_bottom = PGROUNDDOWN(fault_addr);
-  if (new_bottom >= old_bottom || new_bottom < USER_STACK_BOTTOM)
+  uint64 bottom = USER_STACK_TOP - old_ustack_npage * PAGE_SIZE;
+  if (fault_addr < USER_STACK_BOTTOM || fault_addr >= bottom)
     return -1;
-  uint64 va;
-  for (va = new_bottom; va < old_bottom; va += PAGE_SIZE)
-  {
-    uint64 pa = pmem_try_alloc(false);
-    if (pa == 0)
-      break;
-    vm_mappages(pgtbl, va, pa, PAGE_SIZE, PTE_R | PTE_W | PTE_U);
-  }
-  if (va != old_bottom)
-  {
-    if (va > new_bottom)
-      vm_unmappages(pgtbl, new_bottom, va - new_bottom, true);
+  uint64 begin = PGROUNDDOWN(fault_addr);
+  if (grow_pages(pgtbl, begin, bottom) < 0)
     return -1;
-  }
-  return (int64)((USER_STACK_TOP - new_bottom) / PAGE_SIZE);
+  return (USER_STACK_TOP - begin) / PAGE_SIZE;
 }
 
-void destroy_pgtbl(pgtbl_t pgtbl, uint32 level)
+static void free_user_leaves(pgtbl_t pgtbl, int level, uint64 base)
 {
-  if (pgtbl == NULL || level == 0)
-    return;
-  for (uint32 i = 0; i < 512; ++i)
-  {
-    pte_t pte = pgtbl[i];
-    if ((pte & PTE_V) == 0)
+  for (int i = 0; i < 512; ++i) {
+    pte_t entry = pgtbl[i];
+    if ((entry & PTE_V) == 0)
       continue;
-    if ((pte & (PTE_R | PTE_W | PTE_X)) != 0)
-    {
-      if ((pte & PTE_U) != 0)
-        pmem_free(PTE_TO_PA(pte), false);
+    uint64 va = base + ((uint64)i << (12 + 9 * level));
+    if (is_leaf(entry)) {
+      if (level != 0 || va >= VA_MAX)
+        panic("uvm invalid leaf");
+      pgtbl[i] = 0;
+      if (va == TRAMPOLINE || va == TRAPFRAME)
+        continue;
+      /* Ownership belongs to the address space, even when U was cleared. */
+      uint64 page = PTE_TO_PA(entry);
+      pmem_free(page, check_inkernel(page));
+    } else {
+      if (level == 0)
+        panic("uvm invalid page table");
+      free_user_leaves((pgtbl_t)PTE_TO_PA(entry), level - 1, va);
     }
-    else
-    {
-      destroy_pgtbl((pgtbl_t)PTE_TO_PA(pte), level - 1);
-      pmem_free(PTE_TO_PA(pte), true);
-    }
-    pgtbl[i] = 0;
   }
 }
 
@@ -164,52 +232,58 @@ void uvm_destroy_pgtbl(pgtbl_t pgtbl)
 {
   if (pgtbl == NULL)
     return;
-  destroy_pgtbl(pgtbl, 3);
-  pmem_free((uint64)pgtbl, true);
+  free_user_leaves(pgtbl, 2, 0);
+  vm_freewalk(pgtbl);
 }
 
-int copy_range(pgtbl_t old, pgtbl_t new, uint64 begin, uint64 end)
+static bool valid_layout(uint64 heap_top, uint64 ustack_npage,
+                         mmap_region_t *mmap)
 {
-  if ((begin & PAGE_MASK) != 0 || end < begin || end > VA_MAX)
-    return -1;
-  end = PGROUNDUP(end);
-  uint64 va;
-  for (va = begin; va < end; va += PAGE_SIZE)
-  {
-    pte_t *oldpte = vm_getpte(old, va, false);
-    if (oldpte == NULL || (*oldpte & (PTE_V | PTE_U)) != (PTE_V | PTE_U))
-      break;
-    uint64 pa = pmem_try_alloc(false);
-    if (pa == 0)
-      break;
-    memmove((void *)pa, (void *)PTE_TO_PA(*oldpte), PAGE_SIZE);
-    vm_mappages(new, va, pa, PAGE_SIZE,
-                (int)(PTE_FLAGS(*oldpte) & ~PTE_V));
+  if (heap_top < USER_HEAP_BASE || heap_top > MMAP_BEGIN ||
+      ustack_npage > (USER_STACK_TOP - USER_STACK_BOTTOM) / PAGE_SIZE)
+    return false;
+  mmap_region_t *previous = NULL;
+  uint32 count = 0;
+  for (mmap_region_t *region = mmap; region != NULL; region = region->next) {
+    if (++count > MMAP_REGION_COUNT || region->begin < MMAP_BEGIN ||
+        region->end > MMAP_END || region->begin >= region->end ||
+        ((region->begin | region->end) & PAGE_MASK) != 0 ||
+        (region->perm & ~(PTE_R | PTE_W | PTE_X)) != 0 ||
+        (region->perm & PTE_R) == 0)
+      return false;
+    if (previous != NULL &&
+        (region->begin < previous->end ||
+         (region->begin == previous->end && region->perm == previous->perm)))
+      return false;
+    previous = region;
   }
-  if (va == end)
-    return 0;
-  for (uint64 undo = begin; undo < va; undo += PAGE_SIZE)
-    vm_unmappages(new, undo, PAGE_SIZE, true);
-  return -1;
+  return true;
 }
 
 int uvm_copy_pgtbl(pgtbl_t old, pgtbl_t new, uint64 heap_top,
-                   uint64 ustack_npage, mmap_region_t *mmap)
+                    uint64 ustack_npage, mmap_region_t *mmap)
 {
-  if (heap_top < USER_HEAP_BASE || heap_top > MMAP_BEGIN ||
-      ustack_npage == 0)
+  if (old == NULL || new == NULL || old == new ||
+      !valid_layout(heap_top, ustack_npage, mmap))
     return -1;
-  if (copy_range(old, new, USER_BASE, heap_top) < 0)
+  pgtbl_t staged = (pgtbl_t)pmem_alloc(true);
+  if (staged == NULL)
     return -1;
-  uint64 stack_begin = USER_STACK_TOP - ustack_npage * PAGE_SIZE;
-  if (copy_range(old, new, stack_begin, USER_STACK_TOP) < 0)
+  if (stage_pages(staged, new, old, USER_BASE, USER_HEAP_BASE) < 0 ||
+      stage_pages(staged, new, old, USER_HEAP_BASE, PGROUNDUP(heap_top)) < 0 ||
+      stage_pages(staged, new, old, USER_STACK_TOP - ustack_npage * PAGE_SIZE,
+                  USER_STACK_TOP) < 0)
     goto fail;
-  for (mmap_region_t *r = mmap; r != NULL; r = r->next)
-    if (copy_range(old, new, r->begin, r->end) < 0)
+  for (mmap_region_t *region = mmap; region != NULL; region = region->next)
+    if (stage_pages(staged, new, old, region->begin, region->end) < 0)
       goto fail;
+  publish_pages(new, staged, 2);
+  sfence_vma();
+  asm volatile("fence.i" ::: "memory");
+  vm_freewalk(staged);
   return 0;
 
 fail:
-  destroy_pgtbl(new, 3);
+  uvm_destroy_pgtbl(staged);
   return -1;
 }

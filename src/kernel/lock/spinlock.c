@@ -21,6 +21,8 @@ void push_off(void)
   intr_off();
   if (id >= MAX_HARTS)
     panic("hart id exceeds MAX_HARTS");
+  if (interrupt_depth[id] == (uint32)~0U)
+    panic("push_off depth overflow");
   if (interrupt_depth[id] == 0)
     interrupt_was_enabled[id] = old;
   interrupt_depth[id]++;
@@ -46,7 +48,8 @@ void spinlock_init(spinlock_t *lk, const char *name)
 
 bool spinlock_holding(spinlock_t *lk)
 {
-  return lk->locked != 0 && lk->owner == hart_id();
+  return __atomic_load_n(&lk->locked, __ATOMIC_RELAXED) != 0 &&
+         __atomic_load_n(&lk->owner, __ATOMIC_RELAXED) == hart_id();
 }
 
 void spinlock_acquire(spinlock_t *lk)
@@ -58,7 +61,7 @@ void spinlock_acquire(spinlock_t *lk)
   while (__sync_lock_test_and_set(&lk->locked, 1) != 0)
     ;
   __sync_synchronize();
-  lk->owner = hart_id();
+  __atomic_store_n(&lk->owner, hart_id(), __ATOMIC_RELAXED);
 }
 
 void spinlock_release(spinlock_t *lk)
@@ -66,7 +69,7 @@ void spinlock_release(spinlock_t *lk)
   if (!spinlock_holding(lk))
     panic("release");
 
-  lk->owner = ~0UL;
+  __atomic_store_n(&lk->owner, ~0UL, __ATOMIC_RELAXED);
   __sync_synchronize();
   __sync_lock_release(&lk->locked);
   pop_off();

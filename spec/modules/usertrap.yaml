@@ -1,113 +1,44 @@
-id: kernel/usertrap
 module: kernel/usertrap
-purpose: 在U-mode和S-mode之间保存用户状态、处理ecall并安全返回。
 owns:
   - src/kernel/trap/trap_user.c
   - src/kernel/trap/trampoline.S
-functions:
-  - name: trap_user_handler
-    comment:
-      purpose: '在user_vector()里面调用；用户态trap处理的核心逻辑；参考 xv6: kernel/trap.c usertrap()。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-      - 调用者必须满足源码assert检查的锁、类型或状态条件。
-    post:
-      - '在user_vector()里面调用；用户态trap处理的核心逻辑；参考 xv6: kernel/trap.c usertrap()。'
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-      - 源码断言不成立时触发assert诊断。
-  - name: trap_user_return
-    comment:
-      purpose: '调用user_return()；内核态返回用户态；参考 xv6: kernel/trap.c usertrapret()。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 内核态返回用户态。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - '调用user_return()；内核态返回用户态；参考 xv6: kernel/trap.c usertrapret()。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: trampoline
-    comment:
-      purpose: trampoline会作为一个物理页的起点地址。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - trampoline会作为一个物理页的起点地址。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: user_vector
-    comment:
-      purpose: 触发用户态trap后的处理过程。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 触发用户态trap后的处理过程。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: user_return
-    comment:
-      purpose: 用户态trap处理完成后返回。
-      input:
-        - trapframe（寄存器参数）：user_return使用的trapframe参数。
-        - pagetable（寄存器参数）：待切换或访问的页表。
-      output: 用户态trap处理完成后返回。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 用户态trap处理完成后返回。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: trap_user_handler
-    pre:
-      - 当前进程有合法trapframe且来自U-mode
-    post:
-      - ecall推进sepc并完成helloworld分发，随后准备返回
-    errors:
-      - 未知异常输出scause/sepc/stval并终止当前进程
-  - name: trap_user_return
-    pre:
-      - trapframe和用户页表有效
-    post:
-      - SPP清零、SPIE置位，trampoline恢复寄存器并sret
-    errors:
-      - 状态无效时不执行sret
-properties:
-  - id: ecall-advance
-    text: 用户ecall返回地址增加4。
-  - id: trampoline-boundary
-    text: 用户trap入口位于TRAMPOLINE并在切换页表后恢复用户寄存器。
 state:
-  stage: user-mode-entry
-  owned_state:
-    - user trapframe、user sepc、satp字段
-  resource_lifetime:
-    - trapframe随进程存活
-preconditions:
-  - kernel trap入口已安装
-postconditions:
-  - initcode在U-mode继续执行
-invariants:
-  - id: privilege-clear
-    text: 返回用户态前必须清除SPP并设置SPIE。
-dependencies:
-  - kernel/process
-  - kernel/memory
-  - kernel/trap
-  - user/initcode
-rely:
-  - RISC-V sret语义和TRAMPOLINE映射
-guarantee:
-  - 用户代码不能直接绕过trapframe进入内核
-algorithm_intent: 使用trampoline在用户页表和内核页表之间切换，并由C处理用户trap。
+  用户trap状态: trapframe保存用户寄存器和epc，并携带kernel_satp、kernel_sp、kernel_trap、kernel_hartid。
+  trampoline: 同一物理页在内核与所有用户页表的TRAMPOLINE虚拟地址提供监督者RX映射。
+rules:
+  - 用户trap时先完整保存用户寄存器再切换内核页表；切换satp时执行必要的sfence.vma；trapframe物理页不向U-mode开放。
+  - C处理用户trap期间stvec使用kernel_vector；返回用户态前关闭当前hart中断并安装用户向量，避免过渡状态被中断打断。
+  - ecall保存的epc只推进4一次；栈缺页成功后epc不变，返回重试原指令。
+  - 用户非法异常或栈资源不足停止该用户程序并留在内核，不能以panic处理用户请求；内核上下文矛盾才panic。
+functions:
+  'void trap_user_handler(void);':
+    pre:
+      - 从U-mode进入，当前进程、trapframe及内核栈有效；user_vector已保存用户寄存器。
+    effects:
+      - 安装kernel_vector并保存sepc；用户ecall推进epc后交给syscall。
+      - 用户load/store缺页交给uvm_ustack_grow，成功后发布ustack_npage；设备中断由既有trap中断处理机制处理。
+    post:
+      - 已处理的ecall、中断及合法栈缺页通过trap_user_return继续用户执行。
+      - 已映射页权限错误、非栈缺页、指令缺页及其他用户异常不能借栈增长获得访问；未处理异常或资源不足停止用户执行，增长失败保留原映射及页数。
+  'void trap_user_return(void) __attribute__((noreturn));':
+    pre:
+      - 当前进程的页表、trapframe及内核栈有效。
+    effects:
+      - 填入trapframe内核返回字段，安装TRAMPOLINE内user_vector地址，清除SPP并设置SPIE、sepc。
+      - 以a0=TRAPFRAME、a1=用户satp调用user_return。
+    post:
+      - sret后恢复用户上下文并在epc处继续，函数不返回。
+  user_vector:
+    pre:
+      - trap源为U-mode，stvec指向TRAMPOLINE内本符号；sscratch为TRAPFRAME，用户页表含两项特殊映射。
+    effects:
+      - 将用户整数寄存器保存到trapframe，取得内核页表、栈、hart身份和handler后切换至内核上下文。
+    post:
+      - 到达trap_user_handler；用户a0保存在正确字段，完整寄存器布局与user_trapframe_t一致。
+  user_return:
+    pre:
+      - a0为TRAPFRAME，a1为用户satp；sepc、sstatus和trapframe已准备，当前hart中断关闭。
+    effects:
+      - 切换用户页表、同步TLB、设置sscratch、恢复所有用户整数寄存器并执行sret。
+    post:
+      - 在U-mode继续执行，用户a0取trapframe.a0，内核字段不作为用户寄存器恢复。

@@ -1,151 +1,62 @@
-id: user/initcode
 module: user/initcode
-purpose: 构建首个用户程序并提供RISC-V系统调用封装，生成可由内核进程模块装载的initcode字节数组。
 owns:
-  - src/user/initcode.c
-  - src/user/initcode.h
-  - src/user/sys.h
-  - src/user/syscall_arch.h
-  - src/user/syscall_num.h
-functions:
-  - name: main
-    comment:
-      purpose: 首个用户程序入口，连续执行两次SYS_helloworld后保持在用户态运行。
-      input:
-        - 无显式参数。
-      output: 不返回。
-    pre:
-      - USER_BASE已映射为用户可执行页面。
-    post:
-      - 两次ecall均通过用户trap进入内核并返回U-mode。
-    errors:
-      - 用户页表或trap入口无效时由内核trap处理。
-  - name: __syscall0
-    comment:
-      purpose: 按RISC-V ABI将系统调用号放入a7并执行ecall，不传递普通参数。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall1
-    comment:
-      purpose: 使用a0传递1个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-        - a（long）：参数1。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall2
-    comment:
-      purpose: 使用a0至a1传递2个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall3
-    comment:
-      purpose: 使用a0至a2传递3个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall4
-    comment:
-      purpose: 使用a0至a3传递4个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall5
-    comment:
-      purpose: 使用a0至a4传递5个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-  - name: __syscall6
-    comment:
-      purpose: 使用a0至a5传递6个参数并执行ecall。
-      input:
-        - n（long）：系统调用号。
-      output: 返回a0中的系统调用结果。
-    pre:
-      - 当前运行在U-mode。
-    post:
-      - 完成一次ecall并返回用户态。
-    errors:
-      - 未知系统调用由内核返回错误值。
-interface:
-  - name: initcode-image
-    pre:
-      - initcode.c已成功编译并转换为二进制。
-    post:
-      - src/user/initcode.h定义initcode数组和initcode_len。
-    errors:
-      - initcode超过一页时内核拒绝创建首进程。
-properties:
-  - id: syscall-abi
-    text: 系统调用号使用a7，参数依次使用a0至a5，返回值使用a0。
-  - id: generated-image
-    text: initcode.h必须由当前initcode.c的同一次构建生成。
+- src/user/initcode.c
+- src/user/sys.h
+- src/user/syscall_arch.h
+- src/user/syscall_num.h
 state:
-  stage: user-program
-  owned_state:
-    - initcode字节数组和系统调用ABI声明
-  resource_lifetime:
-    - initcode数组随内核镜像存在
-preconditions:
-  - RISC-V用户程序工具链可用
-postconditions:
-  - kernel/process可通过extern引用initcode和initcode_len
-invariants:
-  - id: one-page-initcode
-    text: initcode字节数必须大于0且不超过PAGE_SIZE。
-  - id: system-abi
-    text: syscall_num.h中的系统调用号必须与参考实现和内核分发表完全一致，禁止自行编号。
-    syscall_numbers:
-      SYS_helloworld: 0
-      SYS_copyin: 1
-      SYS_copyout: 2
-      SYS_copyinstr: 3
-      SYS_brk: 4
-      SYS_mmap: 5
-      SYS_munmap: 6
-      SYS_printf: 7
-dependencies:
-  - toolchain
-rely:
-  - RISC-V ecall和函数调用ABI
-guarantee:
-  - 为首进程提供与用户源码一致的可执行字节数组
-algorithm_intent: 将initcode.c编译为平坦二进制，再生成initcode.h字符数组供内核链接和装载。
+  initcode镜像: 构建生成的非空平坦用户字节镜像，最多PAGE_SIZE字节，从USER_BASE开始，首条指令属于main。
+  syscall_num: SYS_helloworld=0，SYS_copyin=1，SYS_copyout=2，SYS_copyinstr=3，SYS_brk=4，SYS_mmap=5，SYS_munmap=6，SYS_printf=7。
+rules:
+- __syscall0至__syscall6将编号放a7、参数依次放a0至a5，执行一次ecall并从a0取得返回值；内联汇编声明memory影响。
+- 通用syscall宏按参数数量调用对应封装，保留原始64位返回位型；专用封装按各自类型解释状态或地址。
+- 用户入口布局由链接脚本或专用入口section明确保证main位于USER_BASE；不能依赖优化级别或函数自动重排。
+- 用户程序通过系统调用输出或管理内存，不直接访问内核、trapframe或trampoline。
+functions:
+  int main(void);:
+    pre:
+    - 在U-mode从USER_BASE执行，sp为USER_STACK_TOP，拥有初始一页栈。
+    effects:
+    - 使用Lab5复制、堆增长、栈缺页及mmap/munmap接口运行用户示例。
+    post:
+    - 请求失败由用户程序按返回值处理；本阶段没有exit服务，main保持执行而不返回到未定义地址。
+  static inline long helloworld(void);:
+    effects:
+    - 发起SYS_helloworld。
+    post:
+    - 返回0。
+  static inline int copyin(const void *src, unsigned long count);:
+    effects:
+    - 发起SYS_copyin读取count个int并请求内核输出。
+    post:
+    - 成功返回0，失败返回-1；count单位为int个数。
+  static inline int copyout(void *dst);:
+    effects:
+    - 发起SYS_copyout向dst写入固定五个int。
+    post:
+    - 成功返回0，失败返回-1；失败可留下已写入前缀。
+  static inline int copyinstr(const char *src);:
+    effects:
+    - 发起SYS_copyinstr读取并输出用户字符串。
+    post:
+    - 成功返回0，失败返回-1。
+  static inline long brk(unsigned long top);:
+    effects:
+    - 发起SYS_brk查询或调整当前堆顶。
+    post:
+    - top为0时返回当前堆顶；调整成功返回新堆顶，失败返回-1。
+  static inline unsigned long mmap(void *start, unsigned long len);:
+    effects:
+    - 发起SYS_mmap，len以字节计。
+    post:
+    - 成功返回非零映射起点，失败返回0；start为NULL选择最低可用区间。
+  static inline int munmap(void *start, unsigned long len);:
+    effects:
+    - 发起SYS_munmap，len以字节计。
+    post:
+    - 成功返回0，失败返回-1。
+  static inline long user_printf(const char *s);:
+    effects:
+    - 发起SYS_printf输出s。
+    post:
+    - 成功返回0，失败返回-1。

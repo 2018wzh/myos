@@ -1,262 +1,311 @@
 #include "method.h"
+#include "../arch/method.h"
 #include "../lib/method.h"
 #include "../lock/method.h"
 #include "../proc/method.h"
 
-static mmap_region_t mmap_pool[MMAP_REGION_COUNT];
-static mmap_region_t *mmap_freelist;
-static spinlock_t mmap_pool_lock;
+static spinlock_t region_lock;
+static mmap_region_t regions[MMAP_REGION_COUNT];
+static bool allocated[MMAP_REGION_COUNT];
+static proc_t *owners[MMAP_REGION_COUNT];
+static mmap_region_t *free_regions;
+static bool initialized;
 
 void mmap_init(void)
 {
-  spinlock_init(&mmap_pool_lock, "mmap pool");
-  mmap_freelist = NULL;
-  for (uint32 i = MMAP_REGION_COUNT; i != 0; --i)
-  {
-    mmap_region_t *r = &mmap_pool[i - 1];
-    memset(r, 0, sizeof(*r));
-    r->index = i - 1;
-    r->next = mmap_freelist;
-    mmap_freelist = r;
+  if (initialized)
+    panic("mmap pool initialized twice");
+  spinlock_init(&region_lock, "mmap regions");
+  for (uint32 i = MMAP_REGION_COUNT; i != 0;) {
+    --i;
+    regions[i].index = i;
+    regions[i].next = free_regions;
+    free_regions = &regions[i];
   }
+  initialized = true;
 }
 
 mmap_region_t *mmap_region_alloc(void)
 {
-  spinlock_acquire(&mmap_pool_lock);
-  mmap_region_t *r = mmap_freelist;
-  if (r != NULL)
-    mmap_freelist = r->next;
-  spinlock_release(&mmap_pool_lock);
-  if (r == NULL)
-    panic("mmap region pool exhausted");
-  uint32 index = r->index;
-  memset(r, 0, sizeof(*r));
-  r->index = index;
-  return r;
-}
-
-void mmap_region_free(mmap_region_t *r)
-{
-  if (r == NULL || r < mmap_pool || r >= mmap_pool + MMAP_REGION_COUNT)
-    panic("invalid mmap region free");
-  spinlock_acquire(&mmap_pool_lock);
-  for (mmap_region_t *p = mmap_freelist; p != NULL; p = p->next)
-    if (p == r)
-      panic("double mmap region free");
-  r->begin = r->end = 0;
-  r->perm = 0;
-  r->next = mmap_freelist;
-  mmap_freelist = r;
-  spinlock_release(&mmap_pool_lock);
-}
-
-void mmap_show_nodelist(void)
-{
-  spinlock_acquire(&mmap_pool_lock);
-  for (mmap_region_t *r = mmap_freelist; r != NULL; r = r->next)
-    printf("node %d index = %d\n", (int)r->index, (int)r->index);
-  spinlock_release(&mmap_pool_lock);
-}
-
-void uvm_show_mmaplist(mmap_region_t *mmap)
-{
-  mmap_region_t *tmp = mmap;
-  printf("\nalloced mmap_space:\n");
-  if (tmp == NULL)
-    printf("empty\n");
-  while (tmp != NULL)
-  {
-    printf("alloced mmap_region: %x ~ %x\n", tmp->begin, tmp->end);
-    tmp = tmp->next;
+  if (!initialized)
+    panic("mmap pool not initialized");
+  spinlock_acquire(&region_lock);
+  mmap_region_t *region = free_regions;
+  if (region != NULL) {
+    free_regions = region->next;
+    allocated[region->index] = true;
+    owners[region->index] = NULL;
+    region->begin = 0;
+    region->end = 0;
+    region->perm = 0;
+    region->next = NULL;
   }
-}
-void mmap_merge(mmap_region_t *a, mmap_region_t *b, bool keep_a)
-{
-  assert(a != NULL && b != NULL && a->perm == b->perm &&
-             (a->end == b->begin || b->end == a->begin),
-         "invalid mmap merge");
-  mmap_region_t *keep = keep_a ? a : b;
-  mmap_region_t *drop = keep_a ? b : a;
-  if (drop->begin < keep->begin)
-    keep->begin = drop->begin;
-  if (drop->end > keep->end)
-    keep->end = drop->end;
-  mmap_region_free(drop);
+  spinlock_release(&region_lock);
+  return region;
 }
 
-uint64 uvm_mmap_find(mmap_region_t *head, uint64 len,
-                     mmap_region_t **last_out, mmap_region_t **next_out)
+static bool contains_region(proc_t *proc, mmap_region_t *region)
 {
-  uint64 candidate = MMAP_BEGIN;
-  mmap_region_t *last = NULL;
-  mmap_region_t *next = head;
-  while (next != NULL)
-  {
-    if (candidate <= next->begin && len <= next->begin - candidate)
+  if (proc == NULL)
+    return false;
+  uint32 count = 0;
+  for (mmap_region_t *p = proc->mmap; p != NULL; p = p->next) {
+    if (++count > MMAP_REGION_COUNT)
+      panic("mmap cyclic region list");
+    if (p == region)
+      return true;
+  }
+  return false;
+}
+
+void mmap_region_free(mmap_region_t *region)
+{
+  uint64 address = (uint64)region;
+  uint64 base = (uint64)regions;
+  if (!initialized || address < base || address - base >= sizeof(regions) ||
+      (address - base) % sizeof(*region) != 0)
+    panic("mmap invalid region free");
+  uint32 index = (address - base) / sizeof(*region);
+  proc_t *current = myproc();
+  spinlock_acquire(&region_lock);
+  if (region->index != index || !allocated[index])
+    panic("mmap double or invalid region free");
+  if (contains_region(owners[index], region) ||
+      (current != owners[index] && contains_region(current, region)))
+    panic("mmap freeing linked region");
+  allocated[index] = false;
+  owners[index] = NULL;
+  region->begin = 0;
+  region->end = 0;
+  region->perm = 0;
+  region->next = free_regions;
+  free_regions = region;
+  spinlock_release(&region_lock);
+}
+
+static void set_owner(mmap_region_t *region, proc_t *proc)
+{
+  spinlock_acquire(&region_lock);
+  owners[region->index] = proc;
+  spinlock_release(&region_lock);
+}
+
+uint64 uvm_mmap_find(mmap_region_t *head_mmap, uint64 len,
+                     mmap_region_t **p_last_mmap, mmap_region_t **p_tmp_mmap)
+{
+  if (len == 0 || (len & PAGE_MASK) != 0 || len > MMAP_END - MMAP_BEGIN)
+    return 0;
+  uint64 begin = MMAP_BEGIN;
+  mmap_region_t *previous = NULL;
+  mmap_region_t *next = head_mmap;
+  while (next != NULL) {
+    if (len <= next->begin - begin)
       break;
-    candidate = next->end;
-    last = next;
+    begin = next->end;
+    previous = next;
     next = next->next;
   }
-  if (candidate > MMAP_END || len > MMAP_END - candidate)
+  if (len > MMAP_END - begin)
     return 0;
-  if (last_out != NULL)
-    *last_out = last;
-  if (next_out != NULL)
-    *next_out = next;
-  return candidate;
+  if (p_last_mmap != NULL)
+    *p_last_mmap = previous;
+  if (p_tmp_mmap != NULL)
+    *p_tmp_mmap = next;
+  return begin;
 }
 
-static int mmap_request(uint64 *begin, uint64 len, mmap_region_t **last,
-                        mmap_region_t **next)
+static bool valid_size(uint32 npages)
 {
-  proc_t *p = myproc();
-  *last = NULL;
-  *next = p->mmap;
-  if (*begin == 0)
-  {
-    *begin = uvm_mmap_find(p->mmap, len, last, next);
-    return *begin == 0 ? -1 : 0;
+  return npages != 0 && npages <= (MMAP_END - MMAP_BEGIN) / PAGE_SIZE;
+}
+
+static bool valid_range(uint64 begin, uint64 len)
+{
+  return begin >= MMAP_BEGIN && begin < MMAP_END &&
+         (begin & PAGE_MASK) == 0 && len <= MMAP_END - begin;
+}
+
+/* Staged leaves are known not to overlap the destination. Installing them
+ * needs no allocation, including where an existing branch is shared. */
+static void publish_pages(pgtbl_t target, pgtbl_t staged, int level)
+{
+  for (int i = 0; i < 512; ++i) {
+    pte_t entry = staged[i];
+    if ((entry & PTE_V) == 0)
+      continue;
+    if ((target[i] & PTE_V) == 0) {
+      target[i] = entry;
+      staged[i] = 0;
+    } else {
+      if (level == 0 || !PTE_CHECK(entry) || !PTE_CHECK(target[i]))
+        panic("mmap publish overlap");
+      publish_pages((pgtbl_t)PTE_TO_PA(target[i]),
+                    (pgtbl_t)PTE_TO_PA(entry), level - 1);
+    }
   }
-  if ((*begin & PAGE_MASK) != 0 || *begin < MMAP_BEGIN ||
-      *begin > MMAP_END || len > MMAP_END - *begin)
-    return -1;
-  while (*next != NULL && (*next)->end <= *begin)
-  {
-    *last = *next;
-    *next = (*next)->next;
-  }
-  if ((*last != NULL && (*last)->end > *begin) ||
-      (*next != NULL && *begin + len > (*next)->begin))
-    return -1;
-  return 0;
 }
 
 uint64 uvm_mmap(uint64 begin, uint32 npages, int perm)
 {
-  proc_t *p = myproc();
-  if (p == NULL || npages == 0 ||
-      (uint64)npages > (MMAP_END - MMAP_BEGIN) / PAGE_SIZE ||
-      (perm & PTE_R) == 0 || (perm & ~(PTE_R | PTE_W | PTE_X)) != 0 ||
-      ((perm & PTE_W) != 0 && (perm & PTE_R) == 0))
-    return (uint64)-1;
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->pgtbl == NULL || !valid_size(npages) ||
+      (perm & ~(PTE_R | PTE_W | PTE_X)) != 0 || (perm & PTE_R) == 0)
+    return 0;
   uint64 len = (uint64)npages * PAGE_SIZE;
-  mmap_region_t *last;
-  mmap_region_t *next;
-  if (mmap_request(&begin, len, &last, &next) < 0)
-    return (uint64)-1;
-
-  mmap_region_t *region = mmap_region_alloc();
-  region->begin = begin;
-  region->end = begin + len;
-  region->perm = perm;
-  uint64 va;
-  for (va = begin; va < region->end; va += PAGE_SIZE)
-  {
-    uint64 pa = pmem_try_alloc(false);
-    if (pa == 0)
-      break;
-    vm_mappages(p->pgtbl, va, pa, PAGE_SIZE, perm | PTE_U);
+  mmap_region_t *previous = NULL;
+  mmap_region_t *next = proc->mmap;
+  if (begin == 0) {
+    begin = uvm_mmap_find(proc->mmap, len, &previous, &next);
+    if (begin == 0)
+      return 0;
+  } else {
+    if (!valid_range(begin, len))
+      return 0;
+    while (next != NULL && next->begin < begin) {
+      previous = next;
+      next = next->next;
+    }
   }
-  if (va != region->end)
-  {
-    if (va > begin)
-      vm_unmappages(p->pgtbl, begin, va - begin, true);
-    mmap_region_free(region);
-    return (uint64)-1;
+  uint64 end = begin + len;
+  if ((previous != NULL && previous->end > begin) ||
+      (next != NULL && end > next->begin))
+    return 0;
+  for (uint64 va = begin; va < end; va += PAGE_SIZE) {
+    pte_t *pte = vm_getpte(proc->pgtbl, va, false);
+    if (pte != NULL && (*pte & PTE_V) != 0)
+      return 0;
   }
 
-  region->next = next;
-  if (last == NULL)
-    p->mmap = region;
-  else
-    last->next = region;
-
-  if (next != NULL && region->end == next->begin &&
-      region->perm == next->perm)
-  {
-    region->end = next->end;
-    region->next = next->next;
-    mmap_region_free(next);
+  bool join_left = previous != NULL && previous->end == begin &&
+                   previous->perm == perm;
+  bool join_right = next != NULL && next->begin == end && next->perm == perm;
+  mmap_region_t *region = NULL;
+  if (!join_left && !join_right) {
+    region = mmap_region_alloc();
+    if (region == NULL)
+      return 0;
   }
-  if (last != NULL && last->end == region->begin &&
-      last->perm == region->perm)
-  {
-    last->end = region->end;
-    last->next = region->next;
-    mmap_region_free(region);
+  pgtbl_t staged = (pgtbl_t)pmem_alloc(true);
+  if (staged == NULL)
+    goto fail;
+  for (uint64 va = begin; va < end; va += PAGE_SIZE) {
+    uint64 page = pmem_alloc(false);
+    if (page == 0)
+      goto fail;
+    if (vm_mappages(staged, va, page, PAGE_SIZE, perm | PTE_U) < 0) {
+      pmem_free(page, false);
+      goto fail;
+    }
+  }
+  publish_pages(proc->pgtbl, staged, 2);
+  sfence_vma();
+  vm_freewalk(staged);
+
+  if (join_left) {
+    previous->end = end;
+    if (join_right) {
+      previous->end = next->end;
+      previous->next = next->next;
+      next->next = NULL;
+      mmap_region_free(next);
+    }
+  } else if (join_right) {
+    next->begin = begin;
+  } else {
+    region->begin = begin;
+    region->end = end;
+    region->perm = perm;
+    region->next = next;
+    set_owner(region, proc);
+    if (previous != NULL)
+      previous->next = region;
+    else
+      proc->mmap = region;
   }
   return begin;
-}
 
-static int range_is_mapped(mmap_region_t *r, uint64 begin, uint64 end)
-{
-  uint64 cursor = begin;
-  while (r != NULL && r->end <= cursor)
-    r = r->next;
-  while (cursor < end)
-  {
-    if (r == NULL || r->begin > cursor)
-      return 0;
-    if (r->end > cursor)
-      cursor = r->end < end ? r->end : end;
-    r = r->next;
-  }
-  return 1;
+fail:
+  uvm_destroy_pgtbl(staged);
+  if (region != NULL)
+    mmap_region_free(region);
+  return 0;
 }
 
 int uvm_munmap(uint64 begin, uint32 npages)
 {
-  proc_t *p = myproc();
-  if (p == NULL || npages == 0 || (begin & PAGE_MASK) != 0 ||
-      begin < MMAP_BEGIN || (uint64)npages > (MMAP_END - MMAP_BEGIN) / PAGE_SIZE)
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->pgtbl == NULL || !valid_size(npages))
     return -1;
   uint64 len = (uint64)npages * PAGE_SIZE;
-  if (begin > MMAP_END || len > MMAP_END - begin)
+  if (!valid_range(begin, len))
     return -1;
   uint64 end = begin + len;
-  if (!range_is_mapped(p->mmap, begin, end))
-    return -1;
+  mmap_region_t *previous = NULL;
+  mmap_region_t *first = proc->mmap;
+  while (first != NULL && first->end <= begin) {
+    previous = first;
+    first = first->next;
+  }
+
+  /* Validate the entire interval before acquiring a split node or unmapping
+   * anything. In particular, adjacent regions may have different permissions. */
+  mmap_region_t *region = first;
+  uint64 cursor = begin;
+  while (cursor < end) {
+    if (region == NULL || region->begin > cursor || region->end <= cursor)
+      return -1;
+    uint64 stop = region->end < end ? region->end : end;
+    for (; cursor < stop; cursor += PAGE_SIZE) {
+      pte_t *pte = vm_getpte(proc->pgtbl, cursor, false);
+      if (pte == NULL ||
+          PTE_PERMS(*pte) != ((uint64)region->perm | PTE_V | PTE_U))
+        return -1;
+    }
+    region = region->next;
+  }
 
   mmap_region_t *split = NULL;
-  for (mmap_region_t *r = p->mmap; r != NULL; r = r->next)
-    if (r->begin < begin && r->end > end)
-      split = mmap_region_alloc();
+  if (first->begin < begin && end < first->end) {
+    split = mmap_region_alloc();
+    if (split == NULL)
+      return -1;
+    split->begin = end;
+    split->end = first->end;
+    split->perm = first->perm;
+    split->next = first->next;
+  }
+  for (uint64 va = begin; va < end; va += PAGE_SIZE) {
+    uint64 page = PTE_TO_PA(*vm_getpte(proc->pgtbl, va, false));
+    vm_unmappages(proc->pgtbl, va, PAGE_SIZE, false);
+    sfence_vma();
+    pmem_free(page, check_inkernel(page));
+  }
 
-  vm_unmappages(p->pgtbl, begin, len, true);
-  mmap_region_t **link = &p->mmap;
-  while (*link != NULL && (*link)->begin < end)
-  {
-    mmap_region_t *r = *link;
-    if (r->end <= begin)
-    {
-      link = &r->next;
-      continue;
-    }
-    if (r->begin < begin && r->end > end)
-    {
-      split->begin = end;
-      split->end = r->end;
-      split->perm = r->perm;
-      split->next = r->next;
-      r->end = begin;
-      r->next = split;
+  if (split != NULL) {
+    set_owner(split, proc);
+    first->end = begin;
+    first->next = split;
+    return 0;
+  }
+  region = first;
+  if (region->begin < begin) {
+    region->end = begin;
+    previous = region;
+    region = region->next;
+  }
+  while (region != NULL && region->begin < end) {
+    if (region->end > end) {
+      region->begin = end;
       break;
     }
-    if (r->begin < begin)
-    {
-      r->end = begin;
-      link = &r->next;
-      continue;
-    }
-    if (r->end > end)
-    {
-      r->begin = end;
-      break;
-    }
-    *link = r->next;
-    mmap_region_free(r);
+    mmap_region_t *next = region->next;
+    if (previous != NULL)
+      previous->next = next;
+    else
+      proc->mmap = next;
+    region->next = NULL;
+    mmap_region_free(region);
+    region = next;
   }
   return 0;
 }

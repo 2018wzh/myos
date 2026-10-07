@@ -4,7 +4,15 @@
 #include "../proc/method.h"
 #include "../../user/syscall_num.h"
 
-static syscall_fn_t syscall_table[] = {
+static user_trapframe_t *current_trapframe(void)
+{
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->trapframe == NULL)
+    panic("syscall without a trapframe");
+  return proc->trapframe;
+}
+
+static const syscall_fn_t syscall_table[] = {
   [SYS_helloworld] = sys_helloworld,
   [SYS_copyin] = sys_copyin,
   [SYS_copyout] = sys_copyout,
@@ -15,58 +23,55 @@ static syscall_fn_t syscall_table[] = {
   [SYS_printf] = sys_printf,
 };
 
+void syscall(void)
+{
+  user_trapframe_t *frame = current_trapframe();
+  uint64 number = frame->a7;
+  if (number >= sizeof(syscall_table) / sizeof(syscall_table[0]) ||
+      syscall_table[number] == NULL) {
+    frame->a0 = (uint64)-1;
+    return;
+  }
+  frame->a0 = syscall_table[number]();
+}
+
 uint64 arg_raw(int n)
 {
-  proc_t *p = myproc();
-  if (p == NULL || p->trapframe == NULL)
-    panic("syscall argument without process");
-  switch (n)
-  {
-    case 0: return p->trapframe->a0;
-    case 1: return p->trapframe->a1;
-    case 2: return p->trapframe->a2;
-    case 3: return p->trapframe->a3;
-    case 4: return p->trapframe->a4;
-    case 5: return p->trapframe->a5;
-    default: panic("invalid syscall argument");
+  user_trapframe_t *frame = current_trapframe();
+  switch (n) {
+  case 0: return frame->a0;
+  case 1: return frame->a1;
+  case 2: return frame->a2;
+  case 3: return frame->a3;
+  case 4: return frame->a4;
+  case 5: return frame->a5;
+  default: panic("invalid syscall argument index");
   }
 }
 
 void arg_uint32(int n, uint32 *ip)
 {
   if (ip == NULL)
-    panic("null uint32 syscall argument");
+    panic("null syscall argument output");
   *ip = (uint32)arg_raw(n);
 }
 
 void arg_uint64(int n, uint64 *ip)
 {
   if (ip == NULL)
-    panic("null uint64 syscall argument");
+    panic("null syscall argument output");
   *ip = arg_raw(n);
 }
 
 int arg_str(int n, char *buf, int maxlen)
 {
-  proc_t *p = myproc();
-  if (p == NULL || buf == NULL || maxlen <= 0)
+  uint64 source = arg_raw(n);
+  if (buf == NULL)
+    panic("null syscall string buffer");
+  if (maxlen <= 0)
     return -1;
-  return uvm_copyin_str(p->pgtbl, (uint64)buf, arg_raw(n),
-                        (uint32)maxlen);
-}
-
-void syscall(void)
-{
-  proc_t *p = myproc();
-  if (p == NULL || p->trapframe == NULL)
-    panic("syscall without process");
-  uint64 number = p->trapframe->a7;
-  uint64 count = sizeof(syscall_table) / sizeof(syscall_table[0]);
-  if (number >= count || syscall_table[number] == NULL)
-  {
-    printf("%s: unknown syscall %d\n", p->name, (int)number);
-    p->trapframe->a0 = (uint64)-1;
-    return;
-  }
-  p->trapframe->a0 = syscall_table[number]();
+  proc_t *proc = myproc();
+  if (proc->pgtbl == NULL)
+    panic("syscall without a page table");
+  return uvm_copyin_str(proc->pgtbl, (uint64)buf, source, (uint32)maxlen);
 }

@@ -4,28 +4,31 @@
 #include "../lock/method.h"
 #include "../mem/method.h"
 #include "../trap/method.h"
+#include "initcode.h"
 
 extern char trampoline[];
-extern unsigned char initcode[];
-extern unsigned int initcode_len;
 
 cpu_t cpus[MAX_HARTS];
 proc_t proczero;
+
+_Static_assert(sizeof(context_t) == 112, "context must match swtch.S");
+_Static_assert(sizeof(initcode) > 0, "initcode must not be empty");
+_Static_assert(sizeof(initcode) <= PAGE_SIZE, "initcode exceeds one page");
 
 cpu_t *mycpu(void)
 {
   uint64 id = hart_id();
   if (id >= MAX_HARTS)
-    panic("mycpu: invalid hart id");
+    panic("invalid CPU id");
   return &cpus[id];
 }
 
 proc_t *myproc(void)
 {
   push_off();
-  proc_t *p = mycpu()->proc;
+  proc_t *proc = mycpu()->proc;
   pop_off();
-  return p;
+  return proc;
 }
 
 void proc_init(void)
@@ -33,66 +36,99 @@ void proc_init(void)
   memset(cpus, 0, sizeof(cpus));
   memset(&proczero, 0, sizeof(proczero));
   spinlock_init(&proczero.lock, "proczero");
-  proczero.state = PROC_UNUSED;
   proczero.name = "proczero";
+  proczero.state = PROC_UNUSED;
+  proczero.kstack = KSTACK(0);
 }
 
 pgtbl_t proc_pgtbl_init(uint64 trapframe)
 {
-  pgtbl_t pgtbl = (pgtbl_t)pmem_alloc(true);
-  vm_mappages(pgtbl, TRAMPOLINE, (uint64)trampoline,
-              PAGE_SIZE, PTE_R | PTE_X);
-  vm_mappages(pgtbl, TRAPFRAME, trapframe,
-              PAGE_SIZE, PTE_R | PTE_W);
-  return pgtbl;
+  if (trapframe == 0 || (trapframe & PAGE_MASK) != 0)
+    panic("invalid trapframe page");
+  pgtbl_t root = (pgtbl_t)pmem_alloc(true);
+  if (root == NULL)
+    return NULL;
+  if (vm_mappages(root, TRAMPOLINE, (uint64)trampoline,
+                  PAGE_SIZE, PTE_R | PTE_X) < 0 ||
+      vm_mappages(root, TRAPFRAME, trapframe,
+                  PAGE_SIZE, PTE_R | PTE_W) < 0) {
+    vm_freewalk(root);
+    return NULL;
+  }
+  return root;
 }
 
 void proc_make_first(void)
 {
-  proc_t *p = &proczero;
-  spinlock_acquire(&p->lock);
-  assert(p->state == PROC_UNUSED, "proczero already initialized");
+  proc_t *proc = &proczero;
+  uint64 frame = 0;
+  uint64 code = 0;
+  uint64 stack = 0;
+  pgtbl_t root = NULL;
 
-  p->trapframe = (user_trapframe_t *)pmem_alloc(true);
-  p->pgtbl = proc_pgtbl_init((uint64)p->trapframe);
-  p->kstack = KSTACK(0);
+  spinlock_acquire(&proc->lock);
+  if (hart_id() != 0 || proc->state != PROC_UNUSED || mycpu()->proc != NULL ||
+      proc->pgtbl != NULL || proc->trapframe != NULL || proc->mmap != NULL)
+    panic("invalid first process startup");
+  if (initcode_len != sizeof(initcode))
+    panic("invalid initcode length");
+  frame = pmem_alloc(true);
+  if (frame == 0)
+    goto fail;
+  root = proc_pgtbl_init(frame);
+  if (root == NULL)
+    goto fail;
+  code = pmem_alloc(false);
+  if (code == 0)
+    goto fail;
+  stack = pmem_alloc(false);
+  if (stack == 0)
+    goto fail;
+  if (vm_mappages(root, USER_BASE, code,
+                  PAGE_SIZE, PTE_R | PTE_X | PTE_U) < 0 ||
+      vm_mappages(root, USER_STACK, stack,
+                  PAGE_SIZE, PTE_R | PTE_W | PTE_U) < 0)
+    goto fail;
 
-  uint64 code_page = pmem_alloc(false);
-  uint64 stack_page = pmem_alloc(false);
-  uint64 initcode_size = (uint64)initcode_len;
-  assert(initcode_size != 0 && initcode_size <= PAGE_SIZE,
-         "initcode must fit in one page");
-  memmove((void *)code_page, initcode, (uint32)initcode_size);
+  memmove((void *)code, initcode, initcode_len);
+  asm volatile("fence.i" ::: "memory");
+  proc->pgtbl = root;
+  proc->trapframe = (user_trapframe_t *)frame;
+  proc->trapframe->epc = USER_BASE;
+  proc->trapframe->sp = USER_STACK_TOP;
+  proc->heap_top = USER_HEAP_BASE;
+  proc->ustack_npage = 1;
+  proc->mmap = NULL;
+  proc->context.ra = (uint64)proc_return;
+  proc->context.sp = proc->kstack + PAGE_SIZE;
+  proc->state = PROC_RUNNING;
+  cpu_t *cpu = mycpu();
+  cpu->proc = proc;
+  swtch(&cpu->context, &proc->context);
+  panic("first process returned to boot context");
 
-  vm_mappages(p->pgtbl, USER_BASE, code_page, PAGE_SIZE,
-              PTE_R | PTE_X | PTE_U);
-  vm_mappages(p->pgtbl, USER_STACK, stack_page, PAGE_SIZE,
-              PTE_R | PTE_W | PTE_U);
-
-  p->trapframe->epc = USER_BASE;
-  p->trapframe->sp = USER_STACK_TOP;
-  p->heap_top = USER_HEAP_BASE;
-  p->ustack_npage = 1;
-  p->mmap = NULL;
-  p->context.ra = (uint64)proc_return;
-  p->context.sp = p->kstack + PAGE_SIZE;
-  p->state = PROC_RUNNING;
-
-  cpu_t *c = mycpu();
-  c->proc = p;
-  swtch(&c->context, &p->context);
-
-  c->proc = NULL;
-  spinlock_release(&p->lock);
-  panic("proczero stopped");
+fail:
+  vm_freewalk(root);
+  if (stack != 0)
+    pmem_free(stack, false);
+  if (code != 0)
+    pmem_free(code, false);
+  if (frame != 0)
+    pmem_free(frame, true);
+  proc->state = PROC_UNUSED;
+  spinlock_release(&proc->lock);
+  printf("cannot allocate first process\n");
+  intr_on();
+  for (;;)
+    asm volatile("wfi");
 }
 
 void proc_return(void)
 {
-  proc_t *p = myproc();
-  if (p == NULL || !spinlock_holding(&p->lock))
-    panic("proc_return without process lock");
-  spinlock_release(&p->lock);
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->state != PROC_RUNNING ||
+      !spinlock_holding(&proc->lock))
+    panic("invalid process context handoff");
+  spinlock_release(&proc->lock);
   trap_user_return();
-  panic("trap_user_return returned");
 }

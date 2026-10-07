@@ -1,156 +1,89 @@
-id: kernel/syscall
 module: kernel/syscall
-purpose: 将用户ecall号分发到内核服务并返回结果。
 owns:
   - src/kernel/syscall/syscall.c
   - src/kernel/syscall/sysfunc.c
   - src/kernel/syscall/method.h
   - src/kernel/syscall/mod.h
   - src/kernel/syscall/type.h
-functions:
-  - name: syscall
-    comment:
-      purpose: 基于系统调用表的请求跳转。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 基于系统调用表的请求跳转。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-  - name: arg_raw
-    comment:
-      purpose: 读取 n 号参数,它放在 an 寄存器中。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-      output: 返回uint64类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数,它放在 an 寄存器中。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: arg_uint32
-    comment:
-      purpose: 读取 n 号参数, 作为 uint32 存储。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-        - ip（uint32 *）：待操作的inode对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数, 作为 uint32 存储。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: arg_uint64
-    comment:
-      purpose: 读取 n 号参数, 作为 uint64 存储。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-        - ip（uint64 *）：待操作的inode对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数, 作为 uint64 存储。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: arg_str
-    comment:
-      purpose: 读取 n 号参数指向的字符串到 buf, 字符串最大长度是 maxlen。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-        - buf（char *）：数据缓冲区。
-        - maxlen（int）：操作数量或长度。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数指向的字符串到 buf, 字符串最大长度是 maxlen。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_brk
-    comment:
-      purpose: 用户堆空间伸缩；uint64 new_heap_top (如果是0, 代表查询当前堆顶位置)；成功返回new_heap_top, 失败返回-1。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回new_heap_top, 失败返回-1。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 用户堆空间伸缩；uint64 new_heap_top (如果是0, 代表查询当前堆顶位置)；成功返回new_heap_top, 失败返回-1。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: sys_mmap
-    comment:
-      purpose: 增加一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节,需检查是否是page-aligned)；成功返回映射空间的起始地址, 失败返回-1。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回映射空间的起始地址, 失败返回-1。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 增加一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节,需检查是否是page-aligned)；成功返回映射空间的起始地址, 失败返回-1。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: sys_munmap
-    comment:
-      purpose: 解除一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节, 需检查是否是page-aligned)；成功返回0 失败返回-1。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回0 失败返回-1。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 解除一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节, 需检查是否是page-aligned)；成功返回0 失败返回-1。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: sys_printf
-    comment:
-      purpose: 实现对应系统调用或用户态系统调用封装（sys_printf）。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回uint64类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 实现对应系统调用或用户态系统调用封装（sys_printf）。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: syscall
-    pre:
-      - usertrap已验证ecall来源
-    post:
-      - 从a7读取编号并将返回值写入a0
-    errors:
-      - 未注册编号返回失败值
-properties:
-  - id: table-dispatch
-    text: 系统调用通过有界函数表分发而不是任意用户地址跳转。
-  - id: copy-contract
-    text: copyout/copyin/copyinstr失败传播到sysfunc。
 state:
-  stage: syscall
-  owned_state:
-    - syscall跳转表、用户ABI编号
-  resource_lifetime:
-    - 一次ecall只持有当前进程资源
-preconditions:
-  - usertrap保存完整寄存器
-postconditions:
-  - 用户看到确定的a0结果
-invariants:
-  - 系统调用参数必须经过用户内存验证
-dependencies:
-  - kernel/usertrap
-  - kernel/uvm
-rely:
-  - RISC-V a0/a7 ABI
-guarantee:
-  - 提供copy、brk、mmap相关服务
-algorithm_intent: 使用固定编号数组查找函数，具体服务通过uvm接口访问用户内存。
+  syscall_table: 固定有界分发表；编号与src/user/syscall_num.h一致，0至7依次为helloworld、copyin、copyout、copyinstr、brk、mmap、munmap、printf。
+rules:
+  - 分发和参数提取要求当前进程及trapframe有效；丢失上下文、无效内核输出指针和参数索引属于内核错误。
+  - a7为调用号，a0至a5为六个原始参数，a0接收64位返回结果；只有usertrap推进epc，syscall不重复推进。
+  - 用户指针只能通过uvm复制访问；用户请求无效和资源不足返回失败，不能panic。
+  - 所有长度先检查完整64位参数，再缩窄到uint32；禁止把超过接口上限的用户值截断为合法长度。
+  - brk失败码为(uint64)-1，mmap失败码为0，其他服务失败码为(uint64)-1；mmap/munmap/heap遵守uvm事务规则，copy允许部分复制。
+functions:
+  'void syscall(void);':
+    effects:
+      - 从当前trapframe.a7查表执行对应服务，将结果写回a0。
+    post:
+      - 未注册或超出表范围的编号在a0返回(uint64)-1且不执行服务；用户epc不变。
+  'uint64 arg_raw(int n);':
+    pre:
+      - n在0至5。
+    effects: []
+    post:
+      - 返回当前trapframe的对应a寄存器原始64位值。
+  'void arg_uint32(int n, uint32 *ip);':
+    pre:
+      - n在0至5且ip可写；调用者已排除不允许的高32位。
+    effects:
+      - 向ip写入参数低32位。
+    post:
+      - 不访问用户指针或改变trapframe。
+  'void arg_uint64(int n, uint64 *ip);':
+    pre:
+      - n在0至5且ip可写。
+    effects:
+      - 向ip写入完整参数。
+    post:
+      - 不访问用户指针或改变trapframe。
+  'int arg_str(int n, char *buf, int maxlen);':
+    pre:
+      - n在0至5；buf指向maxlen字节内核缓冲区。
+    effects:
+      - 通过uvm_copyin_str读取参数指向的字符串。
+    post:
+      - maxlen内包含NUL时返回0，否则返回-1；失败缓冲区可含前缀，不得当作完整字符串使用。
+  'uint64 sys_helloworld(void);':
+    effects:
+      - 输出当前用户进程的hello world消息。
+    post:
+      - 返回0。
+  'uint64 sys_copyin(void);':
+    effects:
+      - 从a0用户地址复制a1个int到内核临时缓冲区，成功后输出这些整数。
+    post:
+      - 数量在1至64且复制成功返回0；数量非法或读取失败返回(uint64)-1，不输出不完整数组。
+  'uint64 sys_copyout(void);':
+    effects:
+      - 向a0用户地址复制五个int，值依次为1、2、3、4、5。
+    post:
+      - 返回0或(uint64)-1；失败可已写入前缀。
+  'uint64 sys_copyinstr(void);':
+    effects:
+      - 读取a0字符串，含NUL最多256字节，成功后输出字符串。
+    post:
+      - 成功返回0，非法地址或无界限内NUL返回(uint64)-1；不输出失败缓冲区。
+  'uint64 sys_brk(void);':
+    effects:
+      - 将当前进程堆顶请求解释为a0；非零时调用uvm堆增长或收缩，成功后更新heap_top。
+    post:
+      - a0为0时只返回当前堆顶；成功返回请求的堆顶，相同堆顶不操作。
+      - 新堆顶超出[USER_HEAP_BASE, MMAP_BEGIN]、变化量超uint32或资源不足返回(uint64)-1，原heap_top及映射不变。
+  'uint64 sys_mmap(void);':
+    effects:
+      - 将a0起点与a1字节长度转换为uvm_mmap请求，权限为PTE_R|PTE_W。
+    post:
+      - 长度必须非零、页对齐且可用uint32表示；成功返回实际映射地址，失败返回0。
+  'uint64 sys_munmap(void);':
+    effects:
+      - 将a0起点与a1字节长度转换为uvm_munmap请求。
+    post:
+      - 长度必须非零、页对齐且可用uint32表示；成功返回0，失败返回(uint64)-1。
+  'uint64 sys_printf(void);':
+    effects:
+      - 读取a0字符串，含NUL最多256字节，完整读取成功后按字符串内容输出，用户内容不能作为内核格式串。
+    post:
+      - 成功返回0，读取失败返回(uint64)-1且不输出失败缓冲区。

@@ -12,18 +12,16 @@ SECTIONS
   . = 0x80000000;
 
   .text : ALIGN(4096) {
-    *(.text.entry)
+    KEEP(*(.text.entry))
     *(.text .text.*)
   } :text
 
-  . = ALIGN(4096);
-  trampoline = .;
-  .trampsec : {
-    *(.trampsec)
+  .trampoline : ALIGN(4096) {
+    KEEP(*(.trampoline))
   } :text
-  trampoline_end = .;
-  ASSERT(trampoline_end - trampoline <= 4096,
-         "trampoline exceeds one page")
+  ASSERT((trampoline & 4095) == 0, "trampoline is not page aligned")
+  ASSERT(SIZEOF(.trampoline) <= 4096, "trampoline exceeds one page")
+  . = ALIGN(4096);
 
   .rodata : ALIGN(16) {
     *(.rodata .rodata.*)
@@ -51,4 +49,5 @@ SECTIONS
   ALLOC_END = 0x88000000;
 
   ASSERT(ALLOC_BEGIN < ALLOC_END, "kernel image exceeds QEMU RAM")
+  ASSERT(_entry == 0x80000000, "kernel entry must be at KERNEL_BASE")
 }

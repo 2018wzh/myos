@@ -9,19 +9,19 @@ static inline long helloworld(void)
   return __syscall0(SYS_helloworld);
 }
 
-static inline long copyin(const void *src, unsigned long count)
+static inline int copyin(const void *src, unsigned long count)
 {
-  return __syscall2(SYS_copyin, (long)src, (long)count);
+  return (int)__syscall2(SYS_copyin, (long)src, (long)count);
 }
 
-static inline long copyout(void *dst)
+static inline int copyout(void *dst)
 {
-  return __syscall1(SYS_copyout, (long)dst);
+  return (int)__syscall1(SYS_copyout, (long)dst);
 }
 
-static inline long copyinstr(const char *src)
+static inline int copyinstr(const char *src)
 {
-  return __syscall1(SYS_copyinstr, (long)src);
+  return (int)__syscall1(SYS_copyinstr, (long)src);
 }
 
 #define SYSCALL0(n) __syscall0((long)(n))
@@ -46,14 +46,14 @@ static inline long brk(unsigned long top)
   return __syscall1(SYS_brk, (long)top);
 }
 
-static inline long mmap(void *start, unsigned long len)
+static inline unsigned long mmap(void *start, unsigned long len)
 {
-  return __syscall2(SYS_mmap, (long)start, (long)len);
+  return (unsigned long)__syscall2(SYS_mmap, (long)start, (long)len);
 }
 
-static inline long munmap(void *start, unsigned long len)
+static inline int munmap(void *start, unsigned long len)
 {
-  return __syscall2(SYS_munmap, (long)start, (long)len);
+  return (int)__syscall2(SYS_munmap, (long)start, (long)len);
 }
 
 static inline long user_printf(const char *s)

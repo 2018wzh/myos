@@ -1,38 +1,30 @@
 system:
-  name: xv6实验系统-Lab5
+  name: xv6教学内核Lab5
   language: C与RISC-V汇编
-  isa: RV64GC
+  stage: 用户虚拟内存与系统调用
 machine:
-  qemu:
-    model: virt
-    harts:
-      default: 2
-      configurable: true
-      policy: 所有实验均须允许通过构建参数选择hart数量，未指定时启动2个hart。
-  hardware:
-    board: QEMU virt
-    status: 已验证用户内存复制、brk、mmap和系统调用分发
-kernel:
-  organization: 单体式教学内核
-  execution: 用户程序通过ecall请求内核服务
-  protection: 页表权限和逐页用户地址验证
-  communication: syscall table与copyin/copyout
-  resource_model: 进程拥有heap/stack/mmap区间
-required_mechanisms:
-  - 用户内存安全复制
-  - brk堆管理
-  - 自动栈增长
-  - mmap/munmap
-  - 页表复制销毁
-  - 系统调用表
-composition_invariants:
-  - copy函数验证范围后才访问
-  - mmap区域不与heap/stack重叠
-  - 失败路径释放临时页
+  model: QEMU virt
+  isa: RV64GC
+  abi: lp64d
+  memory: 128MiB
+  page_size: 4096
+  harts:
+    default: 2
+    allowed: [1, 2]
+rules:
+  - 本规范定义阶段需求，源码与旧文本的差异按本规范修正。
+  - 沿用Lab4内核内存、锁、trap及上下文切换；首用户进程由hart0直接swtch，辅助hart留在内核。
+  - 进程地址空间以heap_top、ustack_npage和mmap链描述，元数据只在映射操作成功后发布。
+  - 用户输入或资源不足返回服务失败；无法恢复的用户异常停止该用户程序；内核不变量错误panic。
+  - 映射修改失败保留操作前映射及元数据并回收临时资源；用户copy失败允许目标已有前缀。
 non_goals:
-  - 文件系统文件操作和exec完整装载
-hardware_port:
-  board: QEMU virt
-  boot: 沿用Lab4
-  console: syscall调试输出
-  interrupt: 用户缺页经usertrap处理
+  - 调度器与多进程生命周期
+  - fork、wait、exec与文件系统
+  - 通过兼容层保留旧接口或编译器访问顺序规避缺页问题
+mechanisms:
+  - 用户页表权限验证及逐页copyin、copyout、copyinstr
+  - brk控制连续堆，load/store缺页补齐合法栈范围内的连续页面
+  - mmap有序区间管理、节点池、兼容相邻合并及munmap裁剪拆分
+  - 用户页表独立复制与按所有权销毁
+  - a7编号及a0至a5参数的有界系统调用表
+  - 明确链接main到用户镜像基址，trampoline完成用户和内核上下文切换

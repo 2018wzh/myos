@@ -5,6 +5,7 @@
 #include "trap/method.h"
 
 static volatile uint32 kernel_ready;
+
 void init(void)
 {
   print_init();
@@ -12,6 +13,14 @@ void init(void)
   kvm_init();
   mmap_init();
   proc_init();
+}
+
+static void idle_forever(void) __attribute__((noreturn));
+
+static void idle_forever(void)
+{
+  for (;;)
+    asm volatile("wfi");
 }
 
 int main(void)
@@ -36,6 +45,5 @@ int main(void)
     trap_kernel_inithart();
     printf("lab5 hart %d ready\n", (int)id);
   }
-  for (;;)
-    ;
+  idle_forever();
 }

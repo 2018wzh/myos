@@ -21,7 +21,7 @@
 #define VA_MAX (1UL << 38)
 #define TRAMPOLINE (VA_MAX - PAGE_SIZE)
 #define TRAPFRAME (TRAMPOLINE - PAGE_SIZE)
-#define KSTACK(procid) (TRAPFRAME - (((uint64)(procid) + 1UL) * 2UL * PGSIZE))
+#define KSTACK(procid) (TRAMPOLINE - (((uint64)(procid) + 1UL) * 2UL * PGSIZE))
 #define USER_BASE PAGE_SIZE
 #define USER_HEAP_BASE (USER_BASE + PAGE_SIZE)
 #define MMAP_END (TRAPFRAME - 16UL * 256UL * PAGE_SIZE)

@@ -1,40 +1,43 @@
-id: toolchain
 module: toolchain
-purpose: 用Makefile将C、汇编和链接脚本投影为可启动内核。
 owns:
   - Makefile
   - common.mk
-functions: []
-interface:
-  - name: build
-    pre:
-      - POSIX make/sh和riscv64-linux-gnu工具链存在
-    post:
-      - 生成kernel-qemu.elf
-    errors:
-      - 编译、链接或工具链失败时停止
-properties:
-  - id: freestanding-build
-    text: 编译使用freestanding、medany、无标准库配置。
-  - id: optimization-and-user-stack-test
-    text: 全局使用-O1和-freorder-functions；-O1避免大用户栈数组在源码指定访问前产生栈底临时访存，-freorder-functions保证用户main仍被排列到固定入口0x1000。
+  - kernel.ld
+  - user.ld
 state:
-  stage: build
-  owned_state:
-    - target/kernel目标文件
-  resource_lifetime:
-    - target目录可由clean删除
-preconditions:
-  - 工具链前缀与common.mk一致
-postconditions:
-  - QEMU可加载链接后的内核
-invariants:
-  - 链接入口和内核地址由kernel.ld唯一决定
-  - 用户initcode以0x1000作为实际首条指令，编译后的函数排列不得让辅助函数先于main占据该地址
-  - 保留-fno-omit-frame-pointer，并以-O1生成符合Lab5栈缺页测试访问顺序的代码
-dependencies: []
-rely:
-  - GCC、binutils、QEMU
-guarantee:
-  - 为boot提供可重复构建命令
-algorithm_intent: 使用wildcard收集内核源文件并按目录映射目标文件。
+  构建产物: target内按HARTS和TIMER_INTERVAL区分的内核对象、用户ELF、平坦用户镜像及最终内核ELF；initcode.h位于相应构建目录，由镜像生成。
+  构建配置: TOOLPREFIX默认riscv64-linux-gnu-，QEMU默认qemu-system-riscv64，HARTS默认2且仅允许1或2，TIMER_INTERVAL默认1000000。
+rules:
+  - 使用freestanding、medany、rv64gc、lp64d与无宿主标准库配置，并保留-fno-omit-frame-pointer；优化级别不承担入口排序或栈增长正确性职责。
+  - 内核链接脚本以_entry为ELF入口，内核从0x80000000开始；trampoline页对齐且不超过一页。
+  - 用户链接脚本以main为ELF入口，同时明确将main所在入口section置于USER_BASE=0x1000；平坦镜像首字节对应main，不能仅设置ELF入口而忽略二进制布局。
+  - 用户镜像非空且含代码和静态数据共不超过一页；若存在BSS，其初值由清零用户装载页提供；用户可写数据不得置于只读代码页。
+  - 用户源、ABI头或链接脚本变化必须重新生成ELF、binary、initcode.h及内嵌对象；构建依赖应允许只重建受影响产物。
+  - 编译、链接和工具失败停止构建；不能使用过期镜像满足失败的依赖步骤。
+targets:
+  all:
+    pre:
+      - make、sh、RV64 GCC/binutils及镜像生成工具可用。
+    effects:
+      - 构建kernel-qemu.elf及当前配置所需依赖，纳入uvm、mmap和syscall对象。
+    post:
+      - 生成包含当前用户镜像的内核ELF，或非零状态停止。
+  kernel-qemu.elf:
+    pre:
+      - HARTS为1或2，TIMER_INTERVAL为有效非零定时周期。
+    effects:
+      - 链接当前配置的内核及用户镜像对象，将当前配置ELF提供为默认启动产物。
+    post:
+      - ELF入口、内核装载地址、trampoline布局及用户镜像满足模块规则。
+  run:
+    pre:
+      - QEMU可用，kernel-qemu.elf构建成功。
+    effects:
+      - 以virt、bios none、128MiB内存、HARTS个hart启动当前内核，串口连接终端。
+    post:
+      - 用户main经首进程入口执行；终止QEMU后返回其退出状态。
+  clean:
+    effects:
+      - 删除target、kernel-qemu.elf和生成的initcode.h。
+    post:
+      - 源码、链接脚本与规范保留，后续构建重新生成所需产物。

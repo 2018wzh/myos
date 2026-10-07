@@ -3,137 +3,95 @@
 #include "../mem/method.h"
 #include "../proc/method.h"
 
-#define SYSCALL_COPY_MAX 256U
+static proc_t *current_proc(void)
+{
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->trapframe == NULL || proc->pgtbl == NULL)
+    panic("invalid syscall process context");
+  return proc;
+}
 
 uint64 sys_helloworld(void)
 {
-  proc_t *p = myproc();
-  printf("%s hello world\n", p->name);
+  printf("%s hello world\n", current_proc()->name);
   return 0;
 }
 
 uint64 sys_copyin(void)
 {
-  proc_t *p = myproc();
-  uint64 src;
-  uint32 len;
-  int values[SYSCALL_COPY_MAX / sizeof(int)];
-  arg_uint64(0, &src);
-  arg_uint32(1, &len);
-  int rc = (len == 0 || len > SYSCALL_COPY_MAX / sizeof(int)) ? -1 : uvm_copyin(p->pgtbl, (uint64)values, src, len * sizeof(int));
-  if (rc < 0)
-  {
-    printf("copyin failed src=%x len=%d\n", src, (int)len);
+  proc_t *proc = current_proc();
+  uint64 count = arg_raw(1);
+  int values[64];
+  if (count == 0 || count > 64)
     return (uint64)-1;
-  }
-  printf("copyin:");
-  for (uint32 i = 0; i < len; ++i)
-    printf(" %d", values[i]);
-  printf("\n");
+  if (uvm_copyin(proc->pgtbl, (uint64)values, arg_raw(0),
+                 (uint32)count * sizeof(values[0])) < 0)
+    return (uint64)-1;
+  for (uint32 i = 0; i < (uint32)count; ++i)
+    printf("%d%c", values[i], i + 1 == count ? '\n' : ' ');
   return 0;
 }
 
 uint64 sys_copyout(void)
 {
-  proc_t *p = myproc();
-  uint64 dst;
-  arg_uint64(0, &dst);
-  static const int values[5] = {1, 2, 3, 4, 5};
-  int rc = uvm_copyout(p->pgtbl, dst, (uint64)values, sizeof(values));
-  if (rc < 0)
-  {
-    printf("copyout failed dst=%x\n", dst);
-    return (uint64)-1;
-  }
-  return 0;
+  proc_t *proc = current_proc();
+  const int values[] = {1, 2, 3, 4, 5};
+  return (uint64)uvm_copyout(proc->pgtbl, arg_raw(0), (uint64)values,
+                             sizeof(values));
 }
 
-uint64 sys_copyinstr(void)
-{
-  char buffer[SYSCALL_COPY_MAX];
-  int rc = arg_str(0, buffer, sizeof(buffer));
-  if (rc < 0)
-  {
-    printf("copyinstr failed\n");
-    return (uint64)-1;
-  }
-  printf("copyinstr: %s\n", buffer);
-  return 0;
-}
-
-uint64 sys_brk(void)
-{
-  proc_t *p = myproc();
-  uint64 requested;
-  arg_uint64(0, &requested);
-  if (requested == 0)
-  {
-    printf("sys_brk query top=%x\n", p->heap_top);
-    return p->heap_top;
-  }
-  uint64 result;
-  if (requested > p->heap_top)
-  {
-    uint64 amount = requested - p->heap_top;
-    if (amount > 0xffffffffUL)
-      return (uint64)-1;
-    result = uvm_heap_grow(p->pgtbl, p->heap_top, (uint32)amount);
-  }
-  else
-  {
-    uint64 amount = p->heap_top - requested;
-    if (amount > 0xffffffffUL)
-      return (uint64)-1;
-    result = uvm_heap_ungrow(p->pgtbl, p->heap_top, (uint32)amount);
-  }
-  if (result == (uint64)-1)
-  {
-    printf("sys_brk old=%x requested=%x result=-1\n",
-           p->heap_top, requested);
-    return result;
-  }
-  printf("sys_brk old=%x requested=%x result=%x\n",
-         p->heap_top, requested, result);
-  p->heap_top = result;
-  return result;
-}
-
-uint64 sys_mmap(void)
-{
-  uint64 start;
-  uint32 len;
-  arg_uint64(0, &start);
-  arg_uint32(1, &len);
-  if (len == 0 || (len & PAGE_MASK) != 0)
-    return (uint64)-1;
-  uint64 result = uvm_mmap(start, len / PAGE_SIZE, PTE_R | PTE_W);
-  // printf("sys_mmap start=%x len=%d result=%x\n", start, (int)len, result);
-  uvm_show_mmaplist(myproc()->mmap);
-  vm_print(myproc()->pgtbl);
-  printf("\n");
-  return result;
-}
-
-uint64 sys_munmap(void)
-{
-  uint64 start;
-  uint32 len;
-  arg_uint64(0, &start);
-  arg_uint32(1, &len);
-  if (len == 0 || (len & PAGE_MASK) != 0)
-    return (uint64)-1;
-  int result = uvm_munmap(start, len / PAGE_SIZE);
-  uvm_show_mmaplist(myproc()->mmap);
-  vm_print(myproc()->pgtbl);
-  printf("\n");
-  return result < 0 ? (uint64)-1 : 0;
-}
-
-uint64 sys_printf(void)
+static uint64 print_user_string(void)
 {
   char buffer[256];
   if (arg_str(0, buffer, sizeof(buffer)) < 0)
     return (uint64)-1;
   printf("%s", buffer);
   return 0;
+}
+
+uint64 sys_copyinstr(void)
+{
+  return print_user_string();
+}
+
+uint64 sys_printf(void)
+{
+  return print_user_string();
+}
+
+uint64 sys_brk(void)
+{
+  proc_t *proc = current_proc();
+  uint64 requested = arg_raw(0);
+  uint64 current = proc->heap_top;
+  if (requested == 0 || requested == current)
+    return current;
+  if (requested < USER_HEAP_BASE || requested > MMAP_BEGIN)
+    return (uint64)-1;
+
+  uint64 change = requested > current ? requested - current : current - requested;
+  if (change > 0xffffffffUL)
+    return (uint64)-1;
+  uint64 top = requested > current
+    ? uvm_heap_grow(proc->pgtbl, current, (uint32)change)
+    : uvm_heap_ungrow(proc->pgtbl, current, (uint32)change);
+  if (top != (uint64)-1)
+    proc->heap_top = top;
+  return top;
+}
+
+uint64 sys_mmap(void)
+{
+  uint64 len = arg_raw(1);
+  if (len == 0 || len > 0xffffffffUL || (len & PAGE_MASK) != 0)
+    return 0;
+  return uvm_mmap(arg_raw(0), (uint32)(len / PAGE_SIZE), PTE_R | PTE_W);
+}
+
+uint64 sys_munmap(void)
+{
+  uint64 len = arg_raw(1);
+  if (len == 0 || len > 0xffffffffUL || (len & PAGE_MASK) != 0)
+    return (uint64)-1;
+  return (uint64)uvm_munmap(arg_raw(0), (uint32)(len / PAGE_SIZE));
 }

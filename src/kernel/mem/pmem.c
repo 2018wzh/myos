@@ -28,6 +28,7 @@ static void region_init(pmem_region_t *region, const char *name,
   region->allocable = 0;
   spinlock_init(&region->lock, name);
 
+  spinlock_acquire(&region->lock);
   for (uint64 page = begin; page < end; page += PAGE_SIZE) {
     memset((void *)page, 1, PAGE_SIZE);
     free_page_t *node = (free_page_t *)page;
@@ -35,6 +36,7 @@ static void region_init(pmem_region_t *region, const char *name,
     region->freelist = node;
     region->allocable++;
   }
+  spinlock_release(&region->lock);
 }
 
 bool check_inkernel(uint64 p)
@@ -56,7 +58,7 @@ void pmem_init(void)
   region_init(&user_region, "user pages", split, end);
 }
 
-uint64 pmem_try_alloc(bool in_kernel)
+uint64 pmem_alloc(bool in_kernel)
 {
   pmem_region_t *region = select_region(in_kernel);
   spinlock_acquire(&region->lock);
@@ -73,28 +75,19 @@ uint64 pmem_try_alloc(bool in_kernel)
   return (uint64)page;
 }
 
-uint64 pmem_alloc(bool in_kernel)
-{
-  uint64 page = pmem_try_alloc(in_kernel);
-  if (page == 0)
-    panic(in_kernel ? "kernel physical memory exhausted" :
-                      "user physical memory exhausted");
-  return page;
-}
-
 void pmem_free(uint64 page, bool in_kernel)
 {
   pmem_region_t *region = select_region(in_kernel);
   if (!page_in_region(region, page))
     panic("invalid physical page free");
 
-  memset((void *)page, 1, PAGE_SIZE);
   free_page_t *node = (free_page_t *)page;
 
   spinlock_acquire(&region->lock);
   for (free_page_t *p = region->freelist; p != NULL; p = p->next)
     if (p == node)
       panic("double physical page free");
+  memset((void *)page, 1, PAGE_SIZE);
   node->next = region->freelist;
   region->freelist = node;
   region->allocable++;

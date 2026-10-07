@@ -1,98 +1,72 @@
 #include "sys.h"
 
-#define PGSIZE 4096UL
-#define VA_MAX (1UL << 38)
-#define TRAMPOLINE (VA_MAX - PGSIZE)
-#define TRAPFRAME (TRAMPOLINE - PGSIZE)
-#define MMAP_END (TRAPFRAME - 16UL * 256UL * PGSIZE)
-#define MMAP_BEGIN (MMAP_END - 64UL * 256UL * PGSIZE)
+enum { PAGE_BYTES = 4096 };
 
-static void stop(void) __attribute__((noreturn));
-static void fail(const char *message) __attribute__((noreturn));
+int main(void) __attribute__((section(".text.user_entry"), noreturn));
 
-static void stop(void)
+static int demo_heap(void)
 {
-  for (;;)
-    asm volatile("nop");
+  long base = brk(0);
+  if (base < 0 || brk((unsigned long)base + 2 * PAGE_BYTES) != base + 2 * PAGE_BYTES)
+    return -1;
+
+  /* These five integers straddle two heap pages. */
+  int *values = (int *)((unsigned long)base + PAGE_BYTES - 2 * sizeof(int));
+  int result = 0;
+  if (copyout(values) < 0 || copyin(values, 5) < 0)
+    result = -1;
+  if (brk((unsigned long)base + 37) != base + 37)
+    result = -1;
+  if (brk((unsigned long)base) != base)
+    result = -1;
+  return result;
 }
 
-static void fail(const char *message)
+static int demo_stack(void) __attribute__((noinline));
+
+static int demo_stack(void)
 {
-  user_printf(message);
-  stop();
+  volatile unsigned char bytes[3 * PAGE_BYTES];
+  /* A distant first access must also allocate all intervening stack pages. */
+  bytes[0] = 11;
+  bytes[PAGE_BYTES] = 22;
+  bytes[sizeof(bytes) - 1] = 33;
+  return bytes[0] == 11 && bytes[PAGE_BYTES] == 22 &&
+         bytes[sizeof(bytes) - 1] == 33 ? 0 : -1;
 }
 
-// static void test_copy(void)
-// {
-//   int values[5];
-//   const char *message = "hello, world";
-//   if (syscall(SYS_copyout, values) != 0 ||
-//       syscall(SYS_copyin, values, 5) != 0 ||
-//       syscall(SYS_copyinstr, message) != 0)
-//     fail("lab5 copy test failed\n");
-//   user_printf("lab5 test 1 passed\n");
-// }
-
-// static void test_brk(void)
-// {
-//   unsigned long heap_top = syscall(SYS_brk, 0);
-//   heap_top = syscall(SYS_brk, 0);
-//   heap_top = syscall(SYS_brk, heap_top + PGSIZE * 9);
-//   heap_top = syscall(SYS_brk, heap_top);
-//   heap_top = syscall(SYS_brk, heap_top - PGSIZE * 5);
-// }
-// static void test_stack()
-// {
-//   char tmp[PGSIZE * 4];
-//   tmp[PGSIZE * 3] = 'h';
-//   tmp[PGSIZE * 3 + 1] = 'e';
-//   tmp[PGSIZE * 3 + 2] = 'l';
-//   tmp[PGSIZE * 3 + 3] = 'l';
-//   tmp[PGSIZE * 3 + 4] = 'o';
-//   tmp[PGSIZE * 3 + 5] = '\0';
-//   if (syscall(SYS_copyinstr, tmp + PGSIZE * 3) != 0)
-//     fail("lab5 stack test failed\n");
-//   tmp[0] = 'w';
-//   tmp[1] = 'o';
-//   tmp[2] = 'r';
-//   tmp[3] = 'l';
-//   tmp[4] = 'd';
-//   tmp[5] = '\0';
-//   if (syscall(SYS_copyinstr, tmp) != 0)
-//     fail("lab5 stack test failed\n");
-//   user_printf("lab5 test 2 passed\n");
-// }
-static void test_mmap(void)
+static int demo_mmap(void)
 {
-  unsigned long a = syscall(SYS_mmap, MMAP_BEGIN + 4 * PGSIZE,
-                            3 * PGSIZE);
-  syscall(SYS_mmap, MMAP_BEGIN + 10 * PGSIZE, 2 * PGSIZE);
-  syscall(SYS_mmap, MMAP_BEGIN + 2 * PGSIZE, 2 * PGSIZE);
-  syscall(SYS_mmap, MMAP_BEGIN + 12 * PGSIZE, PGSIZE);
-  syscall(SYS_mmap, MMAP_BEGIN + 7 * PGSIZE, 3 * PGSIZE);
-  syscall(SYS_mmap, MMAP_BEGIN, 2 * PGSIZE);
-  syscall(SYS_mmap, 0, 10 * PGSIZE);
-  if ((long)a == -1)
-    fail("lab5 mmap test failed\n");
-  syscall(SYS_munmap, MMAP_BEGIN + 10 * PGSIZE, 5 * PGSIZE);
-  syscall(SYS_munmap, MMAP_BEGIN, 10 * PGSIZE);
-  syscall(SYS_munmap, MMAP_BEGIN + 17 * PGSIZE, 2 * PGSIZE);
-  syscall(SYS_munmap, MMAP_BEGIN + 15 * PGSIZE, 2 * PGSIZE);
-  syscall(SYS_munmap, MMAP_BEGIN + 19 * PGSIZE, 2 * PGSIZE);
-  syscall(SYS_munmap, MMAP_BEGIN + 22 * PGSIZE, PGSIZE);
-  syscall(SYS_munmap, MMAP_BEGIN + 21 * PGSIZE, PGSIZE);
-  user_printf("lab5 tests 3 and 4 passed\n");
+  unsigned long base = mmap((void *)0, 2 * PAGE_BYTES);
+  if (base == 0)
+    return -1;
+  int *values = (int *)(base + PAGE_BYTES - 2 * sizeof(int));
+  int result = 0;
+  if (values[0] != 0 || values[4] != 0 ||
+      copyout(values) < 0 || copyin(values, 5) < 0)
+    result = -1;
+  if (munmap((void *)base, 2 * PAGE_BYTES) < 0)
+    result = -1;
+  return result;
 }
 
 int main(void)
 {
-  // test_copy();
-  // test_brk();
-  // test_stack();
-  test_mmap();
+  int values[5];
+  if (helloworld() != 0 || copyout(values) < 0 || copyin(values, 5) < 0 ||
+      copyinstr("lab5 user copies\n") < 0)
+    goto failed;
+  for (int i = 0; i < 5; ++i)
+    if (values[i] != i + 1)
+      goto failed;
+  if (demo_heap() < 0 || demo_stack() < 0 || demo_mmap() < 0 ||
+      user_printf("lab5 complete\n") < 0)
+    goto failed;
+  goto done;
 
-  while (1)
-    ;
-  return 0;
-  stop();
+failed:
+  (void)user_printf("lab5 failed\n");
+done:
+  for (;;)
+    asm volatile("" ::: "memory");
 }

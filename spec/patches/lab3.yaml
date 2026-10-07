@@ -1,50 +1,25 @@
-id: lab3-trap-devices
-transition: lab2 -> lab3
-reason: 在内存基础上加入监督者异常入口、时钟和UART/PLIC设备中断。
+lab: 3
+goal: 在内存基础上加入监督者异常入口、时钟和UART/PLIC设备中断。
+requires: lab2
 changes:
 - kernel/trap
 - kernel/memory
 - kernel/boot
 - toolchain
-required_updates:
-- target: start
-  module: kernel/boot
-  change: 在进入S-mode前配置异常与中断委托、监督者中断位和机器态时钟。
-  reason: Lab3新增的监督者trap入口需要由机器态提前完成中断路由。
-- target: main
-  module: kernel/boot
-  change: 在开启中断前安装内核trap向量，并完成PLIC和当前hart的中断初始化。
-  reason: 避免中断在trap向量或设备控制器尚未就绪时到达。
-- target: uart_intr、uart_putc_sync
-  module: kernel/console
-  change: 调整UART收发逻辑，使接收事件可由PLIC外部中断处理，并保证同步输出不破坏中断状态。
-  reason: 串口从仅支持轮询输出扩展为可处理中断输入。
-- target: arch/type.h、trap/type.h、trap/method.h
-  module: kernel/trap
-  change: 补充监督者中断使能位、scause编码、trap现场结构和时钟/PLIC/trap入口声明，并保持汇编入口与C处理函数使用同一组布局和常量。
-  reason: start、trap.S和C分发器只有共享一致的寄存器位定义与现场布局，才能正确委托、保存和恢复中断。
-new_invariants:
-- 所有可识别外部中断必须完成claim生命周期
-- trap返回前必须恢复原现场
-- 汇编保存现场的槽位顺序必须与C侧trap上下文定义一致
-verification:
-- id: timer-interrupt-rate
-  entry: timer_update / timer_interrupt_handler
-  setup:
+acceptance:
+- scenario: timer-interrupt-rate
+  input:
   - 在时钟中断路径临时输出ticks。
   - 使用make run启动Lab3。
-  steps:
   - 观察连续时钟滴答。
   - 修改INTERVAL后重新构建运行并比较输出频率。
   expected:
   - ticks单调递增且系统持续响应。
   - 增大INTERVAL后滴答变慢，减小后变快。
   - 每次软件/时钟中断均能返回原执行流。
-- id: uart-console-echo
-  entry: uart_intr / uart_putc_sync
-  setup:
+- scenario: uart-console-echo
+  input:
   - 使用make run进入QEMU控制台。
-  steps:
   - 依次输入普通字符、Backspace和回车换行。
   - 连续快速输入一串字符。
   expected:
