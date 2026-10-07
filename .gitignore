@@ -2,3 +2,6 @@ target/
 kernel-qemu.elf
 src/user/initcode.h
 .tmp/
+
+__pycache__/
+*.pyc
