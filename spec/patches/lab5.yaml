@@ -1,99 +1,48 @@
-id: lab5-user-vm-syscall
-transition: lab4 -> lab5
-reason: 将用户地址空间管理和系统调用参数传递接入Lab4用户进程。
+lab: 5
+goal: 在Lab4首用户进程基础上提供用户内存复制、动态堆栈、mmap及统一系统调用。
+requires:
+  - Lab4的内存、锁、trap、进程上下文、用户镜像与trampoline机制。
+  - 内存模块提供可恢复页分配；页表创建与映射失败可观察并回滚，不能将正常资源不足作为panic。
 changes:
-- kernel/uvm
-- kernel/syscall
-- kernel/usertrap
-- kernel/process
-- toolchain
-required_updates:
-- target: main
-  module: kernel/boot
-  change: 在创建用户进程前初始化mmap节点资源池。
-  reason: 后续系统调用和进程地址空间初始化会使用mmap节点。
-- target: proc_make_first
-  module: kernel/process
-  change: 为首个进程初始化heap、用户栈和mmap状态。
-  reason: Lab4的固定地址空间需要扩展为可由brk、缺页和mmap动态管理的地址空间。
-- target: trap_user_handler
-  module: kernel/usertrap
-  change: 将ecall处理改为统一调用syscall分发器，并在用户缺页时尝试扩展用户栈。
-  reason: 用户trap需要承接Lab5新增的系统调用和按需栈增长机制。
-- target: proc_t
-  module: kernel/process
-  change: 为进程地址空间状态增加heap_top、ustack_npage和mmap链表头，并在创建首进程时初始化为与实际页表映射一致的值。
-  reason: brk、自动栈增长、mmap和地址空间销毁都依赖这些元数据描述已经发布的用户映射。
-- target: syscall、syscall_num
-  module: kernel/syscall
-  change: 建立brk、mmap、munmap及用户内存复制相关调用号与内核分发表的对应关系，统一通过trapframe传参和返回。
-  reason: trap_user_handler转交给统一分发器后，调用号、参数提取和处理函数必须一致才能形成完整ecall路径。
-- target: Makefile
-  module: toolchain
-  change: 把uvm、mmap和syscall目录的对象加入内核构建，并在用户入口重建后重新生成内嵌initcode。
-  reason: 用户虚拟内存和系统调用实现必须与调用它们的用户入口一起进入同一阶段镜像。
-new_invariants:
-- 系统调用不能绕过用户页表验证
-- 地址空间修改失败不得破坏原有已发布映射
-- proc_t中的heap、stack和mmap元数据必须与页表中的已发布映射一致
-- 用户调用号、内核分发表索引和处理函数声明必须一一对应
-verification:
-- id: user-kernel-copy
-  entry: sys_copyin / sys_copyout / sys_copyinstr
-  setup:
-  - 在initcode中准备整数数组和以NUL结尾的字符串。
-  steps:
-  - 通过系统调用把用户数组复制进内核并复制回用户空间。
-  - 复制跨页字符串并限制最大长度。
-  - 传入越界或未映射地址验证失败路径。
-  expected:
-  - 合法数组和字符串往返后内容一致。
-  - 字符串在NUL或maxlen处停止。
-  - 非法用户地址被拒绝，不允许内核直接解引用。
-- id: heap-and-stack-growth
-  entry: SYS_brk and user page-fault path
-  setup:
-  - 在initcode中查询当前堆顶并准备深层栈访问。
-  steps:
-  - 用brk扩展和收缩堆并读写新区域。
-  - 触发位于合法栈增长范围内的缺页。
-  - 尝试让heap、stack或mmap区域越界重叠。
-  expected:
-  - brk(0)返回当前堆顶，合法增长后页面可读写。
-  - 合法栈缺页自动映射新页并返回用户态。
-  - 越界、重叠或非法收缩返回失败且不破坏原映射。
-- id: mmap-node-pool
-  entry: mmap_region_alloc / mmap_region_free
-  setup:
-  - 初始化mmap节点池。
-  steps:
-  - 分配全部256个节点并记录index。
-  - 按交错顺序释放，再次分配全部节点。
-  expected:
-  - 首次index按0到255覆盖且不重复。
-  - 释放后节点全部可再次取得。
-  - 节点链无环、无丢失且空闲计数恢复。
-- id: mmap-munmap-layout
-  entry: initcode mmap/munmap sequence
-  setup:
-  - 使用Lab5分支现有initcode中的映射与解除映射序列。
-  steps:
-  - 按既定地址依次建立多个相邻和分离区域。
-  - 执行跨区域、前缀、后缀和整段munmap。
-  - 检查最终mmap链和对应页表。
-  expected:
-  - 区域始终按地址有序且互不重叠。
-  - 可合并区域正确合并，部分解除映射正确拆分。
-  - 未映射范围或非法参数返回失败，已发布映射保持一致。
-- id: page-table-copy-destroy
-  entry: uvm_copy_pgtbl / uvm_destroy_pgtbl
-  setup:
-  - 准备包含heap、stack和mmap页面的源用户页表。
-  steps:
-  - 复制页表并比较各区域数据。
-  - 修改副本页面确认物理页不与源共享。
-  - 销毁副本并检查页表页、数据页和mmap资源释放。
-  expected:
-  - 副本虚拟布局、权限和初始内容与源一致。
-  - 修改副本不影响源地址空间。
-  - 销毁后资源计数恢复且源页表仍有效。
+  - module: kernel/boot
+    functions: ['void init(void);', 'int main(void);']
+    change: 在首进程创建前初始化mmap节点池，保持hart0直接切入用户、辅助hart停驻的阶段流程。
+  - module: kernel/process
+    functions: ['pgtbl_t proc_pgtbl_init(uint64 trapframe);', 'void proc_make_first(void) __attribute__((noreturn));']
+    change: 创建时发布一致的heap_top、ustack_npage、mmap状态，资源不足时清理未发布资源。
+  - module: kernel/uvm
+    functions: ['int uvm_copyin(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len);', 'int uvm_copyout(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 len);', 'int uvm_copyin_str(pgtbl_t pgtbl, uint64 dst, uint64 src, uint32 maxlen);', 'uint64 uvm_heap_grow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len);', 'uint64 uvm_heap_ungrow(pgtbl_t pgtbl, uint64 cur_heap_top, uint32 len);', 'int64 uvm_ustack_grow(pgtbl_t pgtbl, uint64 old_ustack_npage, uint64 fault_addr);', 'int uvm_copy_pgtbl(pgtbl_t old, pgtbl_t new, uint64 heap_top, uint64 ustack_npage, mmap_region_t *mmap);', 'void uvm_destroy_pgtbl(pgtbl_t pgtbl);']
+    change: 实现权限受控逐页复制、可回滚堆栈增长、独立页表复制及所有权明确的销毁。
+  - module: kernel/uvm
+    functions: ['void mmap_init(void);', 'mmap_region_t *mmap_region_alloc(void);', 'void mmap_region_free(mmap_region_t *mmap);', 'uint64 uvm_mmap_find(mmap_region_t *head_mmap, uint64 len, mmap_region_t **p_last_mmap, mmap_region_t **p_tmp_mmap);', 'uint64 uvm_mmap(uint64 begin, uint32 npages, int perm);', 'int uvm_munmap(uint64 begin, uint32 npages);']
+    change: 使用有序区间链管理mmap；统一地址/0返回值、节点耗尽NULL及完整覆盖的munmap事务。
+  - module: kernel/syscall
+    functions: ['void syscall(void);', 'uint64 sys_brk(void);', 'uint64 sys_mmap(void);', 'uint64 sys_munmap(void);', 'uint64 sys_copyin(void);', 'uint64 sys_copyout(void);', 'uint64 sys_copyinstr(void);', 'uint64 sys_printf(void);']
+    change: 建立固定ABI分发表，完整检查参数宽度并通过uvm访问用户地址。
+  - module: kernel/usertrap
+    functions: ['void trap_user_handler(void);', 'void trap_user_return(void) __attribute__((noreturn));']
+    change: 接入统一syscall及合法多页栈缺页增长；用户失败停止用户执行，ecall只推进epc一次。
+  - module: user/initcode
+    functions: ['int main(void);', 'static inline unsigned long mmap(void *start, unsigned long len);', 'static inline int munmap(void *start, unsigned long len);']
+    change: 提供与内核返回约定一致的用户封装及完整Lab5用户示例。
+  - module: toolchain
+    change: 构建所有新增模块，明确main位于用户二进制起点，取消优化级别及函数重排的正确性要求。
+acceptance:
+  - scenario: 用户复制及字符串边界
+    inputs: 合法非对齐跨页缓冲区、不可读/不可写页、后续缺页、零长度、溢出地址，以及NUL在maxlen末位或不在范围内的字符串。
+    expected: 合法复制内容一致；权限或范围错误返回失败；后续页面失败允许目标已有前缀；字符串仅在范围内读取到NUL时成功。
+  - scenario: 堆与多页栈增长
+    inputs: brk查询、页内及跨页增长/收缩、边界越界请求，以及合法栈范围内一次跨多页的load/store缺页。
+    expected: 堆顶与映射保持一致，合法多页栈缺页补齐并重试原指令；非法请求返回失败，用户异常停止用户执行。
+  - scenario: 地址空间分配失败
+    inputs: 堆增长、栈增长、mmap或页表复制期间数据页、页表页或节点不足。
+    expected: 失败按接口返回，操作前映射与元数据保留，临时资源回收，不panic。
+  - scenario: mmap链及munmap覆盖
+    inputs: 自动选址、固定地址、重叠请求、相邻同权限/不同权限区间、前缀/后缀/中段/跨区间解除及含空洞解除。
+    expected: 区间有序非重叠，仅合并兼容相邻区间；合法解除正确裁剪拆分，含空洞或拆分资源不足时完全不改变映射和链。
+  - scenario: 页表复制与所有权销毁
+    inputs: 含代码、heap、stack、mmap及特殊映射的源页表，带独立trapframe的目标页表。
+    expected: 用户内容与权限相同且物理页独立；失败保留目标原有特殊映射；销毁回收用户页与页表页，不重复释放trapframe或trampoline。
+  - scenario: syscall与入口
+    inputs: 已注册及未知编号、高位非零长度，HARTS=1和HARTS=2的用户ELF与平坦镜像。
+    expected: a7/a0至a5/a0 ABI正确，未知编号失败，长度不截断接受；epc只推进4一次；两种配置均从USER_BASE的main进入用户态。

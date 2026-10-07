@@ -91,6 +91,8 @@ typedef struct proc {
 typedef struct cpu {
   proc_t *proc;
   context_t scheduler;
+  uint32 noff;
+  bool intena;
 } cpu_t;
 
 _Static_assert(sizeof(user_trapframe_t) == 288,

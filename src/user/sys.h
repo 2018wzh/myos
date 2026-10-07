@@ -26,12 +26,12 @@ static inline long brk(unsigned long top)
   return __syscall1(SYS_brk, (long)top);
 }
 
-static inline long mmap(void *start, unsigned long len)
+static inline unsigned long mmap(void *start, unsigned long len)
 {
   return __syscall2(SYS_mmap, (long)start, (long)len);
 }
 
-static inline long munmap(void *start, unsigned long len)
+static inline int munmap(void *start, unsigned long len)
 {
   return __syscall2(SYS_munmap, (long)start, (long)len);
 }
@@ -39,6 +39,39 @@ static inline long munmap(void *start, unsigned long len)
 static inline long user_printf(const char *s)
 {
   return __syscall1(SYS_print_str, (long)s);
+}
+
+static inline int print_int(int value)
+{
+  return syscall(SYS_print_int, value);
+}
+
+static inline int getpid(void)
+{
+  return syscall(SYS_getpid);
+}
+
+static inline int fork(void)
+{
+  return syscall(SYS_fork);
+}
+
+static inline int wait(int *code)
+{
+  return syscall(SYS_wait, code);
+}
+
+static inline void exit(int code) __attribute__((noreturn));
+
+static inline void exit(int code)
+{
+  (void)syscall(SYS_exit, code);
+  __builtin_unreachable();
+}
+
+static inline int sleep(unsigned int ntick)
+{
+  return syscall(SYS_sleep, ntick);
 }
 
 #endif

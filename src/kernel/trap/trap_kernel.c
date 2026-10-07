@@ -3,6 +3,7 @@
 #include "../arch/method.h"
 #include "../lib/method.h"
 #include "../proc/method.h"
+#include "../lock/method.h"
 
 void trap_kernel_init(void)
 {
@@ -22,7 +23,7 @@ void trap_kernel_inithart(void)
 
 void timer_interrupt_handler(void)
 {
-  if (r_tp() == 0)
+  if (hart_id() == 0)
     timer_update();
 }
 
@@ -62,17 +63,20 @@ int interrupt_info(void)
       return 2;
     }
   }
-
   return 0;
 }
 
 void trap_kernel_handler(void)
 {
-  int which = interrupt_info();
-  if (which != 0)
-  {
-    if (which == 1 && myproc() != NULL)
+  if ((r_sstatus() & SSTATUS_SPP) == 0 || intr_get())
+    panic("invalid kernel trap context");
+  int interrupt = interrupt_info();
+  if (interrupt != 0) {
+    proc_t *p = myproc();
+    if (interrupt == 1 && p != NULL && p->state == PROC_RUNNING)
       proc_yield();
+    if (intr_get())
+      panic("kernel trap enabled interrupts");
     return;
   }
 

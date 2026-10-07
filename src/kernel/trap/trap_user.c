@@ -1,7 +1,7 @@
 #include "method.h"
 #include "../arch/method.h"
-#include "../arch/type.h"
 #include "../lib/method.h"
+#include "../lock/method.h"
 #include "../mem/method.h"
 #include "../proc/method.h"
 #include "../syscall/method.h"
@@ -10,80 +10,70 @@ extern char trampoline[];
 extern char user_vector[];
 extern char user_return[];
 
+static void stop_user(proc_t *proc, uint64 cause, uint64 epc, uint64 fault)
+  __attribute__((noreturn));
+
+static void stop_user(proc_t *proc, uint64 cause, uint64 epc, uint64 fault)
+{
+  printf("%s stopped: scause=%x sepc=%x stval=%x\n",
+         proc->name, cause, epc, fault);
+  proc_exit(-1);
+}
+
 void trap_user_handler(void)
 {
-  proc_t *p = myproc();
-  if (p == NULL)
-    panic("user trap without process");
-  if ((r_sstatus() & SSTATUS_SPP) != 0)
-    panic("user trap did not originate in U-mode");
-
+  uint64 epc = r_sepc();
   w_stvec((uint64)kernel_vector);
-  p->trapframe->epc = r_sepc();
+  if ((r_sstatus() & SSTATUS_SPP) != 0 || intr_get())
+    panic("invalid user trap context");
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->state != PROC_RUNNING || proc->trapframe == NULL ||
+      proc->pgtbl == NULL || proc->kstack == 0)
+    panic("user trap without a running process");
+  proc->trapframe->epc = epc;
 
-  uint64 scause = r_scause();
-  if (scause == SCAUSE_U_ECALL)
-  {
-    p->trapframe->epc += 4;
+  uint64 cause = r_scause();
+  if (cause == SCAUSE_U_ECALL) {
+    proc->trapframe->epc += 4;
+    intr_on();
     syscall();
-  }
-  else if (scause == SCAUSE_LOAD_PAGE_FAULT ||
-           scause == SCAUSE_STORE_PAGE_FAULT)
-  {
-    printf("user page fault scause=%x stval=%x oldpages=%d\n",
-           scause, r_stval(), (int)p->ustack_npage);
-    int64 pages = uvm_ustack_grow(p->pgtbl, p->ustack_npage, r_stval());
+  } else if (cause == SCAUSE_LOAD_PAGE_FAULT || cause == SCAUSE_STORE_PAGE_FAULT) {
+    uint64 fault = r_stval();
+    int64 pages = uvm_ustack_grow(proc->pgtbl, proc->ustack_npage, fault);
     if (pages < 0)
-    {
-      printf("invalid user page fault: scause=%x sepc=%x stval=%x\n",
-             scause, r_sepc(), r_stval());
-      proc_exit(-1);
-    }
-    p->ustack_npage = (uint64)pages;
-    printf("user stack grown pages=%d\n", (int)pages);
-  }
-  else
-  {
-    int which = interrupt_info();
-    if (which == 0)
-    {
-      printf("unexpected user trap: scause=%x sepc=%x stval=%x\n",
-             scause, r_sepc(), r_stval());
-      proc_exit(-1);
-    }
-    if (which == 1)
+      stop_user(proc, cause, epc, fault);
+    proc->ustack_npage = (uint64)pages;
+  } else {
+    int interrupt = interrupt_info();
+    if (interrupt == 0)
+      stop_user(proc, cause, epc, r_stval());
+    if (interrupt == 1)
       proc_yield();
   }
-
   trap_user_return();
 }
 
 void trap_user_return(void)
 {
-  proc_t *p = myproc();
-  if (p == NULL || p->trapframe == NULL || p->pgtbl == NULL)
-    panic("invalid process return state");
-
   intr_off();
-  uint64 uservec = TRAMPOLINE +
-                   ((uint64)user_vector - (uint64)trampoline);
-  w_stvec(uservec);
+  proc_t *proc = myproc();
+  if (proc == NULL || proc->trapframe == NULL || proc->pgtbl == NULL ||
+      proc->state != PROC_RUNNING || proc->kstack == 0)
+    panic("invalid user return context");
 
-  p->trapframe->kernel_satp = MAKE_SATP(kernel_pgtbl);
-  p->trapframe->kernel_sp = p->kstack + PAGE_SIZE;
-  p->trapframe->kernel_trap = (uint64)trap_user_handler;
-  p->trapframe->kernel_hartid = r_tp();
+  uint64 vector = TRAMPOLINE + (uint64)user_vector - (uint64)trampoline;
+  w_stvec(vector);
+  proc->trapframe->kernel_satp = r_satp();
+  proc->trapframe->kernel_sp = proc->kstack + PAGE_SIZE;
+  proc->trapframe->kernel_trap = (uint64)trap_user_handler;
+  proc->trapframe->kernel_hartid = hart_id();
 
   uint64 status = r_sstatus();
   status &= ~SSTATUS_SPP;
   status |= SSTATUS_SPIE;
   w_sstatus(status);
-  w_sepc(p->trapframe->epc);
-
-  uint64 userret = TRAMPOLINE +
-                   ((uint64)user_return - (uint64)trampoline);
-  void (*return_to_user)(uint64, uint64) =
-      (void (*)(uint64, uint64))userret;
-  return_to_user(TRAPFRAME, MAKE_SATP(p->pgtbl));
-  panic("user_return returned");
+  w_sepc(proc->trapframe->epc);
+  uint64 entry = TRAMPOLINE + (uint64)user_return - (uint64)trampoline;
+  ((void (*)(uint64, uint64))entry)(TRAPFRAME, MAKE_SATP(proc->pgtbl));
+  __builtin_unreachable();
 }

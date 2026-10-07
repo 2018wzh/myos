@@ -1,228 +1,99 @@
-id: kernel/syscall
 module: kernel/syscall
-purpose: 将用户ecall号分发到内核服务并返回结果。
 owns:
   - src/kernel/syscall/syscall.c
   - src/kernel/syscall/sysfunc.c
+  - src/kernel/syscall/type.h
   - src/kernel/syscall/method.h
   - src/kernel/syscall/mod.h
-  - src/kernel/syscall/type.h
-functions:
-  - name: syscall
-    comment:
-      purpose: 基于系统调用表的请求跳转。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 基于系统调用表的请求跳转。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-  - name: arg_raw
-    comment:
-      purpose: 读取 n 号参数,它放在 an 寄存器中。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-      output: 返回uint64类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数,它放在 an 寄存器中。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: arg_uint32
-    comment:
-      purpose: 读取 n 号参数, 作为 uint32 存储。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-        - ip（uint32 *）：待操作的inode对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数, 作为 uint32 存储。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: arg_uint64
-    comment:
-      purpose: 读取 n 号参数, 作为 uint64 存储。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-        - ip（uint64 *）：待操作的inode对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数, 作为 uint64 存储。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: arg_str
-    comment:
-      purpose: 读取 n 号参数指向的字符串到 buf, 字符串最大长度是 maxlen。
-      input:
-        - n（int）：数量、长度或编号，具体含义由函数上下文决定。
-        - buf（char *）：数据缓冲区。
-        - maxlen（int）：操作数量或长度。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 读取 n 号参数指向的字符串到 buf, 字符串最大长度是 maxlen。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_brk
-    comment:
-      purpose: 用户堆空间伸缩；uint64 new_heap_top (如果是0, 代表查询当前堆顶位置)；成功返回new_heap_top, 失败返回-1。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回new_heap_top, 失败返回-1。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 用户堆空间伸缩；uint64 new_heap_top (如果是0, 代表查询当前堆顶位置)；成功返回new_heap_top, 失败返回-1。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: sys_mmap
-    comment:
-      purpose: 增加一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节,需检查是否是page-aligned)；成功返回映射空间的起始地址, 失败返回-1。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回映射空间的起始地址, 失败返回-1。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 增加一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节,需检查是否是page-aligned)；成功返回映射空间的起始地址, 失败返回-1。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: sys_munmap
-    comment:
-      purpose: 解除一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节, 需检查是否是page-aligned)；成功返回0 失败返回-1。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回0 失败返回-1。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 解除一段内存映射；uint64 start 起始地址；uint32 len   范围 (字节, 需检查是否是page-aligned)；成功返回0 失败返回-1。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: sys_print_str
-    comment:
-      purpose: 打印一个字符串；char *str；成功返回0。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回0。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 打印一个字符串；char *str；成功返回0。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_print_int
-    comment:
-      purpose: 打印一个32位整数；int num；成功返回0。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回0。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 打印一个32位整数；int num；成功返回0。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_fork
-    comment:
-      purpose: 进程复制；返回子进程的pid。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回子进程的pid。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 进程复制；返回子进程的pid。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_wait
-    comment:
-      purpose: 等待子进程退出；uint64 addr_exit_state。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回uint64类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 等待子进程退出；uint64 addr_exit_state。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_exit
-    comment:
-      purpose: 进程退出；int exit_code；不返回。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 不返回。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 进程退出；int exit_code；不返回。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_sleep
-    comment:
-      purpose: 让进程睡眠一段时间；uint32 ntick (1个tick大约0.1秒)；成功返回0。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 成功返回0。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 让进程睡眠一段时间；uint32 ntick (1个tick大约0.1秒)；成功返回0。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: sys_getpid
-    comment:
-      purpose: 返回当前进程的pid。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回当前进程的pid。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 返回当前进程的pid。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: syscall
-    pre:
-      - usertrap已验证ecall来源
-    post:
-      - 从a7读取编号并将返回值写入a0
-    errors:
-      - 未注册编号返回失败值
-properties:
-  - id: table-dispatch
-    text: 系统调用通过有界函数表分发而不是任意用户地址跳转。
-  - id: copy-contract
-    text: copyout/copyin/copyinstr失败传播到sysfunc。
 state:
-  stage: syscall
-  owned_state:
-    - syscall跳转表、用户ABI编号
-  resource_lifetime:
-    - 一次ecall只持有当前进程资源
-preconditions:
-  - usertrap保存完整寄存器
-postconditions:
-  - 用户看到确定的a0结果
-invariants:
-  - 系统调用参数必须经过用户内存验证
-dependencies:
-  - kernel/usertrap
-  - kernel/uvm
-rely:
-  - RISC-V a0/a7 ABI
-guarantee:
-  - 提供copy、brk、mmap相关服务
-algorithm_intent: 使用固定编号数组查找函数，具体服务通过uvm接口访问用户内存。
+  syscall_table: 按user/syscall_num.h编号索引的处理函数表；类型syscall_fn_t为无参数并返回uint64的函数指针。
+rules:
+  - 从当前trapframe的a7取调用号、a0至a5取参数，结果写回a0；编号与用户侧一致。
+  - 用户指针只能通过uvm复制接口访问；普通用户错误返回失败，不panic。
+  - 本模块只分发并适配参数，内存和进程状态转换遵守对应模块契约。
+functions:
+  "void syscall(void);":
+    pre:
+      - 当前进程有有效trapframe。
+    effects:
+      - 检查调用号范围和表项后调用处理函数，并写回a0。
+    post:
+      - 未知调用号的a0为(uint64)-1；正常调用写入其返回值；exit不返回。
+  "uint64 arg_raw(int n);":
+    pre:
+      - 当前进程有有效trapframe；n在0至5之间。
+    effects:
+      - 读取对应a寄存器。
+    post:
+      - 返回参数原始64位值；内核传入非法n时panic。
+  "void arg_uint32(int n, uint32 *ip);":
+    pre:
+      - n在0至5之间，ip指向有效内核输出对象。
+    effects:
+      - 将原始参数低32位写入ip。
+    post:
+      - 不解引用参数所表示的用户地址。
+  "void arg_uint64(int n, uint64 *ip);":
+    pre:
+      - n在0至5之间，ip指向有效内核输出对象。
+    effects:
+      - 将原始64位参数写入ip。
+    post:
+      - 不解引用参数所表示的用户地址。
+  "int arg_str(int n, char *buf, int maxlen);":
+    pre:
+      - n在0至5之间，buf具有maxlen字节可写内核空间。
+    effects:
+      - 将参数指定的用户字符串通过uvm_copyin_str复制到buf。
+    post:
+      - 含NUL的字符串完整复制返回0；maxlen非正、无终止符或非法用户地址返回-1，允许已复制前缀。
+  "uint64 sys_brk(void);":
+    effects:
+      - 读取参数0作为目标堆顶，调用堆管理；调整量不能用uint32表示时返回失败，仅成功后更新heap_top。
+    post:
+      - 参数0为0时查询当前堆顶；成功返回新堆顶，越界或资源不足返回(uint64)-1且原映射和heap_top不变。
+  "uint64 sys_mmap(void);":
+    effects:
+      - 将参数0作为起点、参数1完整64位作为字节长度；要求非零、页对齐且不超过mmap区域容量，再换算为页数调用uvm_mmap建立用户RW区间。
+    post:
+      - 成功返回起点；参数或资源错误返回0，失败不发布映射；起点0表示自动选择地址。
+  "uint64 sys_munmap(void);":
+    effects:
+      - 将参数0作为起点、参数1完整64位作为字节长度；要求非零、页对齐且不超过mmap区域容量，再换算为页数调用uvm_munmap。
+    post:
+      - 成功返回0，失败返回(uint64)-1且原映射和区间表不变。
+  "uint64 sys_print_str(void);":
+    effects:
+      - 安全复制参数0指定的NUL结尾字符串，最多256字节含NUL，成功后输出。
+    post:
+      - 成功返回0；非法地址或未在上限内终止返回(uint64)-1且不输出部分字符串。
+  "uint64 sys_print_int(void);":
+    effects:
+      - 将参数0低32位解释为有符号整数并输出一行。
+    post:
+      - 返回0。
+  "uint64 sys_getpid(void);":
+    effects:
+      - 读取当前进程pid。
+    post:
+      - 返回当前pid。
+  "uint64 sys_fork(void);":
+    effects:
+      - 调用proc_fork。
+    post:
+      - 父进程返回子pid，子进程返回0；失败返回(uint64)-1。
+  "uint64 sys_wait(void);":
+    effects:
+      - 将参数0作为退出码输出用户地址并调用proc_wait。
+    post:
+      - 返回被回收子pid，失败返回(uint64)-1；地址0不复制退出码。
+  "uint64 sys_exit(void);":
+    effects:
+      - 将参数0低32位解释为有符号退出码并调用proc_exit。
+    post:
+      - 不返回。
+  "uint64 sys_sleep(void);":
+    effects:
+      - 按参数0低32位指定的tick数调用timer_wait。
+    post:
+      - 至少经过该数量的共享tick后返回0；0立即返回。

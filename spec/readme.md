@@ -1,116 +1,40 @@
-# LAB-6: 单进程走向多进程——进程调度与生命周期
+# Spec 编写与使用
 
-## 测试用例
+模块只写 `module / owns / state / rules / functions`。系统、构建和实验增量各用自己的 YAML，避免把构建目标写成函数。
 
-以下测试只需要修改**user/initcode.c**
-**测试1** 
+`owns` 列实现归属；声明和类型从公开头文件提供。`state` 用一个对象一段说明表达归属、有效期与访问约束。`rules` 只放多个函数共同遵守的约束，每条行为只维护一个主要位置。
 
-```c
-#include "sys.h"
+函数以完整 C 声明为键，汇编以实际入口符号为键。`pre` 是调用者义务，可以省略；`effects` 是允许的副作用和执行期间协议，必须出现，无副作用写 `[]`；`post` 写正常、错误、等待和不返回的结果，必须出现。内部助手通常不写。
 
-int main()
-{
-	int pid = syscall(SYS_getpid);
-	if (pid == 1) {
-		syscall(SYS_print_str, "\nproczero: hello ");
-		syscall(SYS_print_str, "world!\n");
-	}
-	while (1);	
-}
+从需求开始：先确定状态和接口，再写正常结果、失败结果以及不可破坏的关系。例如“复制用户内存”需要明确跨页、权限、失败值与允许部分复制；不能只写“按源码实现”。锁应由实现获取时，不要把持锁要求转嫁给调用者。
+
+例如，console 的接收契约可以这样表达；UART 访问方式在该模块的 state 中只写一次：
+
+```yaml
+functions:
+  "int uart_getc_sync(void)":
+    pre:
+      - UART 已配置，调用期间没有其他接收消费者。
+    effects:
+      - 检查接收就绪状态；就绪时读取一个接收字节，不写设备、不回显。
+    post:
+      - 未就绪返回 -1，不等待。
+      - 已就绪返回无符号字节值 0..255。
 ```
 
-**测试2** 
+如果生成代码一直等待输入，应先判断：契约已有“不等待”而实现违反，是代码错误；契约没规定是否等待，是规格缺失。补齐后一种条款后重新生成，而不是直接给模型粘贴答案。
 
-请在内核代码合适的位置增加提示性输出
+生成时提供前一实验实现、本阶段规格、公开声明和必要依赖，不提供本阶段答案。规格是需求权威：缺失或矛盾先修订规格，实现错误调试实现。修改关键条款后，用全新生成任务再次实现受影响部分。不要为了通过测试删去已确定需求。
 
-```c
-#include "sys.h"
+本目录是完整参考规格。学生可只维护当前实验的公共契约和关键机制，通过生成结果理解需求表达是否充分；无需设计普通辅助函数或逐句翻译代码。
 
-int main()
-{
-	syscall(SYS_print_str, "level-1!\n");
-	syscall(SYS_fork);
-	syscall(SYS_print_str, "level-2!\n");
-	syscall(SYS_fork);
-	syscall(SYS_print_str, "level-3!\n");
-	while(1);
-}
+```sh
+make HARTS=2
+make run HARTS=2
+make run HARTS=1
+make clean
 ```
 
-**测试3** 
+使用 RISC-V GCC/binutils、POSIX make/sh、xxd 和 QEMU。默认两个 hart。运行场景见当前实验 patch 的 acceptance；只运行当前改动相关场景。
 
-```c
-#include "sys.h"
-
-#define PGSIZE 4096
-#define VA_MAX (1ul << 38)
-#define MMAP_END (VA_MAX - (2 + 16 * 256) * PGSIZE)
-#define MMAP_BEGIN (MMAP_END - 64 * 256 * PGSIZE)
-
-int main()
-{
-	int pid, i;
-	char *str1, *str2, *str3 = "STACK_REGION\n\n";
-	char *tmp1 = "MMAP_REGION\n", *tmp2 = "HEAP_REGION\n";
-	
-	str1 = (char*)syscall(SYS_mmap, MMAP_BEGIN, PGSIZE);
-	for (i = 0; tmp1[i] != '\0'; i++)
-		str1[i] = tmp1[i];
-	str1[i] = '\0';	
-
-	str2 = (char*)syscall(SYS_brk, 0);
-	syscall(SYS_brk, (long long int)str2 + PGSIZE);
-	for (i = 0; tmp2[i] != '\0'; i++)
-		str2[i] = tmp2[i];
-	str2[i] = '\0';	
-
-	syscall(SYS_print_str, "\n--------test begin--------\n");
-	pid = syscall(SYS_fork);
-
-	if (pid == 0) { // 子进程
-		syscall(SYS_print_str, "child proc: hello!\n");
-		syscall(SYS_print_str, str1);
-		syscall(SYS_print_str, str2);
-		syscall(SYS_print_str, str3);
-		syscall(SYS_exit, 1234);
-	} else { // 父进程
-		int exit_state = 0;
-		syscall(SYS_wait, &exit_state);
-		syscall(SYS_print_str, "parent proc: hello!\n");
-		syscall(SYS_print_int, pid);
-		if (exit_state == 1234)
-			syscall(SYS_print_str, "good boy!\n");
-		else
-			syscall(SYS_print_str, "bad boy!\n"); 
-	}
-
-	syscall(SYS_print_str, "--------test end----------\n");
-
-	while (1);
-	
-	return 0;
-}
-```
-
-**测试4** 
-
-请在内核代码合适的位置增加提示性输出
-
-```c
-#include "sys.h"
-
-int main()
-{
-	int pid = syscall(SYS_fork);
-	if (pid == 0) {
-		syscall(SYS_print_str, "Ready to sleep!\n");
-		syscall(SYS_sleep, 30);
-		syscall(SYS_print_str, "Ready to exit!\n");
-		syscall(SYS_exit, 0);
-	} else {
-		syscall(SYS_wait, 0);
-		syscall(SYS_print_str, "Child exit!\n");
-	}
-	while(1);
-}
-```
+功能测试使用 `python tools/test_lab.py --lab 4 --harts 2`（在对应实验分支替换实验号）。运行器临时注入场景、增量编译、运行 QEMU，并在结束时恢复源码；输出不另存日志。

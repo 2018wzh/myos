@@ -1,119 +1,58 @@
-id: kernel/lock
 module: kernel/lock
-purpose: 用原子交换和中断关闭保护内核共享状态。
 owns:
   - src/kernel/lock/spinlock.c
-  - src/kernel/lock/method.h
   - src/kernel/lock/type.h
-functions:
-  - name: push_off
-    comment:
-      purpose: 带层数叠加的关中断。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 带层数叠加的关中断。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: pop_off
-    comment:
-      purpose: 带层数叠加的开中断。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-      - 调用者必须满足源码assert检查的锁、类型或状态条件。
-    post:
-      - 带层数叠加的开中断。
-    errors:
-      - 源码断言不成立时触发assert诊断。
-  - name: spinlock_init
-    comment:
-      purpose: 自选锁初始化。
-      input:
-        - lk（spinlock_t *）：待操作的锁对象。
-        - name（char *）：目标名称字符串。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 自选锁初始化。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: spinlock_holding
-    comment:
-      purpose: 是否持有自旋锁。
-      input:
-        - lk（spinlock_t *）：待操作的锁对象。
-      output: 返回布尔值，表示源码所检查的条件或操作结果是否成立。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 是否持有自旋锁。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: spinlock_acquire
-    comment:
-      purpose: 获取自选锁。
-      input:
-        - lk（spinlock_t *）：待操作的锁对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 获取自选锁。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-  - name: spinlock_release
-    comment:
-      purpose: 释放自旋锁。
-      input:
-        - lk（spinlock_t *）：待操作的锁对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 释放自旋锁。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-interface:
-  - name: acquire
-    pre:
-      - 锁对象已初始化
-    post:
-      - 调用者独占锁
-    errors:
-      - 递归获取或非法锁对象属于未定义输入
-  - name: release
-    pre:
-      - 调用者持有锁
-    post:
-      - 锁可被其他执行流获取并恢复中断状态
-    errors:
-      - 非持有者释放必须被拒绝或诊断
-properties:
-  - id: interrupt-preservation
-    text: 获取锁前保存中断使能状态，释放锁后恢复原状态。
+  - src/kernel/lock/method.h
 state:
-  stage: kernel-runtime
-  owned_state:
-    - 锁字、锁名称、中断嵌套计数
-  resource_lifetime:
-    - 锁对象由静态或调用者生命周期管理
-preconditions:
-  - RISC-V原子指令可用
-postconditions:
-  - 临界区互斥成立
-invariants:
-  - 共享打印状态不得在未持锁时修改
-dependencies:
-  - kernel/boot
-rely:
-  - 单核或硬件原子操作
-guarantee:
-  - 为printf及后续并发模块提供互斥
-algorithm_intent: push_off后使用原子交换自旋，pop_off恢复调用者中断状态。
+  spinlock_t: 原子锁字、名称和持有hart标识；未持有时owner不对应有效hart。
+  sleeplock_t: 内部spinlock_t、locked、pid、name；行为由kernel/sleeplock定义。
+  interrupt_state: cpu_t.noff为每hart关闭中断的嵌套深度，intena为最外层push_off之前的中断状态，经mycpu访问。
+rules:
+  - 自旋锁先push_off再竞争，释放锁后pop_off；递归获取及非持有者释放panic。
+  - acquire/release提供跨hart的内存可见性；锁保护范围不能仅依赖volatile。
+  - cpu_t的中断记账只在无锁且无push_off嵌套时初始化；proc_init不得清零仍使用中的记账。
+  - scheduler跨上下文交接进程锁时保留嵌套深度1，proc_sched保存恢复执行流的intena；解锁使用恢复运行的当前hart。
+functions:
+  "uint64 hart_id(void);":
+    effects:
+      - 读取内核tp。
+    post:
+      - 返回当前hart编号。
+  "void push_off(void);":
+    effects:
+      - 关闭中断，最外层记录原状态，并将当前hart的noff加1。
+    post:
+      - 中断关闭，嵌套调用不覆盖最外层intena。
+  "void pop_off(void);":
+    pre:
+      - 中断关闭且当前hart的noff大于0。
+    effects:
+      - noff减1，仅在减为0且intena为true时开中断。
+    post:
+      - 恢复匹配最外层push_off前的中断状态；未配对或意外开中断panic。
+  "void spinlock_init(spinlock_t *lk, const char *name);":
+    effects:
+      - 设置名称、清除锁字和持有者。
+    post:
+      - lk可被获取。
+  "bool spinlock_holding(spinlock_t *lk);":
+    pre:
+      - lk已初始化；调用者已关闭中断，读取期间不会迁移。
+    effects:
+      - 读取锁字和持有hart。
+    post:
+      - 当前hart持有时返回true，不改变锁或中断状态。
+  "void spinlock_acquire(spinlock_t *lk);":
+    pre:
+      - lk已初始化，当前hart尚未持有。
+    effects:
+      - push_off并原子竞争锁，取得后登记当前hart。
+    post:
+      - 当前hart独占锁且中断关闭；之前持有者的临界区写入可见。
+  "void spinlock_release(spinlock_t *lk);":
+    pre:
+      - 当前hart持有lk。
+    effects:
+      - 发布临界区写入，清除持有者并原子释放锁，再pop_off。
+    post:
+      - 锁可被其他hart获取，中断状态按嵌套规则恢复。

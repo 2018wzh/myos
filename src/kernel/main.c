@@ -4,7 +4,8 @@
 #include "proc/method.h"
 #include "trap/method.h"
 
-static volatile uint32 kernel_ready;
+static uint32 kernel_ready;
+
 void init(void)
 {
   print_init();
@@ -21,10 +22,7 @@ int main(void)
   if (id == 0)
   {
     init();
-    kvm_inithart();
     trap_kernel_init();
-    trap_kernel_inithart();
-    printf("lab6 hart %d ready\n", (int)id);
     proc_make_first();
     __atomic_store_n(&kernel_ready, 1, __ATOMIC_RELEASE);
   }
@@ -32,9 +30,8 @@ int main(void)
   {
     while (__atomic_load_n(&kernel_ready, __ATOMIC_ACQUIRE) == 0)
       ;
-    kvm_inithart();
-    trap_kernel_inithart();
-    printf("lab6 hart %d ready\n", (int)id);
   }
+  kvm_inithart();
+  trap_kernel_inithart();
   proc_scheduler();
 }

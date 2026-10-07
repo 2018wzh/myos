@@ -4,7 +4,7 @@
 
 void sleeplock_init(sleeplock_t *lk, const char *name)
 {
-  spinlock_init(&lk->lock, name);
+  spinlock_init(&lk->lock, "sleeplock");
   lk->locked = false;
   lk->pid = 0;
   lk->name = name;
@@ -12,10 +12,9 @@ void sleeplock_init(sleeplock_t *lk, const char *name)
 
 bool sleeplock_holding(sleeplock_t *lk)
 {
-  proc_t *p = myproc();
-  bool holding;
   spinlock_acquire(&lk->lock);
-  holding = lk->locked && p != NULL && lk->pid == p->pid;
+  proc_t *p = myproc();
+  bool holding = p != NULL && lk->locked && lk->pid == p->pid;
   spinlock_release(&lk->lock);
   return holding;
 }
@@ -24,8 +23,10 @@ void sleeplock_acquire(sleeplock_t *lk)
 {
   proc_t *p = myproc();
   if (p == NULL)
-    panic("sleeplock outside process");
+    panic("sleeplock without process");
   spinlock_acquire(&lk->lock);
+  if (lk->locked && lk->pid == p->pid)
+    panic("recursive sleeplock");
   while (lk->locked)
     proc_sleep(lk, &lk->lock);
   lk->locked = true;
@@ -35,10 +36,10 @@ void sleeplock_acquire(sleeplock_t *lk)
 
 void sleeplock_release(sleeplock_t *lk)
 {
-  proc_t *p = myproc();
   spinlock_acquire(&lk->lock);
-  if (!lk->locked || p == NULL || lk->pid != p->pid)
-    panic("sleeplock release");
+  proc_t *p = myproc();
+  if (p == NULL || !lk->locked || lk->pid != p->pid)
+    panic("sleeplock released by non-owner");
   lk->locked = false;
   lk->pid = 0;
   proc_wakeup(lk);

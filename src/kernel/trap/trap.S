@@ -46,7 +46,7 @@ kernel_vector:
         csrw sepc, t0
         ld ra,   0(sp)
         ld gp,   8(sp)
-        ld tp,  16(sp)
+        # tp identifies the current hart, which may differ after scheduling.
         ld t0,  24(sp)
         ld t1,  32(sp)
         ld t2,  40(sp)
@@ -92,11 +92,10 @@ timer_vector:
         sd a3, 0(a1)
 
         li a1, 2
-        csrw sip, a1
+        csrs sip, a1
 
         ld a3, 16(a0)
         ld a2, 8(a0)
         ld a1, 0(a0)
         csrrw a0, mscratch, a0
         mret
-

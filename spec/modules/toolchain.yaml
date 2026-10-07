@@ -1,41 +1,31 @@
-id: toolchain
 module: toolchain
-purpose: 用Makefile将C、汇编和链接脚本投影为可启动内核。
 owns:
   - Makefile
   - common.mk
-functions: []
-interface:
-  - name: build
-    pre:
-      - POSIX make/sh和riscv64-linux-gnu工具链存在
-    post:
-      - 生成kernel-qemu.elf
-    errors:
-      - 编译、链接或工具链失败时停止
-properties:
-  - id: freestanding-build
-    text: 编译使用freestanding、medany、无标准库配置。
-  - id: optimization-and-user-stack-test
-    text: 全局使用-O1和-freorder-functions；-O1避免大用户栈数组在源码指定访问前产生栈底临时访存，-freorder-functions保证用户main仍被排列到固定入口0x1000。
+  - kernel.ld
+  - user.ld
 state:
-  stage: build
-  owned_state:
-    - target/kernel目标文件
-  resource_lifetime:
-    - target目录可由clean删除
-preconditions:
-  - 工具链前缀与common.mk一致
-postconditions:
-  - QEMU可加载链接后的内核
-invariants:
-  - 链接入口和内核地址由kernel.ld唯一决定
-  - 用户initcode以0x1000作为实际首条指令，编译后的函数排列不得让辅助函数先于main占据该地址
-  - 保留-fno-omit-frame-pointer，并以-O1维持大栈测试从1页到2页再到5页的缺页顺序
-dependencies: []
-rely:
-  - GCC、binutils、QEMU
-guarantee:
-  - 为boot提供可重复构建命令
-  - 延续Lab5确定的编译优化和用户入口排列约束
-algorithm_intent: 使用wildcard收集内核源文件并按目录映射目标文件。
+  configuration: HARTS默认2且仅支持1或2；TIMER_INTERVAL为正计时周期；TOOLPREFIX默认riscv64-linux-gnu-，QEMU默认qemu-system-riscv64。
+  build_products: BUILD_DIR内配置独立的对象和依赖文件、用户ELF、二进制和initcode.h，以及最终kernel-qemu.elf；生成头文件不写入src树。
+  link_layout: RV64内核从0x80000000的_entry进入；trampoline页对齐且不超过PAGE_SIZE；KERNEL_DATA、kernel_end、ALLOC_BEGIN、ALLOC_END描述段与可分配RAM边界。
+rules:
+  - 使用POSIX make/sh及RV64GC LP64D freestanding工具链，不依赖宿主标准库；编译和链接失败立即停止。
+  - 根目录user.ld使用户程序在USER_BASE显式建立入口，不能依赖编译器函数排列或特定优化级别偶然把main放在开头。
+  - 内核段权限、trampoline布局及用户入口由构建/链接规则保证；不把降低优化级别作为修复错误的手段。
+  - 改动用户源码、头文件、配置或链接脚本后，增量构建更新相应产物并重新链接；不同hart配置不得混用旧对象。
+targets:
+  all:
+    effects:
+      - 编译内核C和汇编，生成当前用户二进制及initcode数据对象并链接内核。
+    post:
+      - kernel-qemu.elf对应当前源码和配置；用户入口和镜像大小符合装载约束。
+  run:
+    effects:
+      - 先完成all，再以virt、无BIOS、128MiB RAM、指定hart数及串口终端启动QEMU。
+    post:
+      - 当前镜像开始运行，可观察用户程序输出。
+  clean:
+    effects:
+      - 删除本项目生成的构建目录、镜像及initcode.h。
+    post:
+      - 保留所有手写源码和规格文件，可从源码重新构建。

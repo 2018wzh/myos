@@ -1,277 +1,124 @@
-id: kernel/trap
 module: kernel/trap
-purpose: 建立监督者trap入口并分发时钟与串口外部中断。
 owns:
   - src/kernel/trap/trap.S
   - src/kernel/trap/trap_kernel.c
   - src/kernel/trap/timer.c
   - src/kernel/trap/plic.c
   - src/kernel/trap/type.h
-functions:
-  - name: kernel_vector
-    comment:
-      purpose: S-mode 中断处理 (包括软件中断和外设中断)。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - S-mode 中断处理 (包括软件中断和外设中断)。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_vector
-    comment:
-      purpose: M-mode 中断处理 (包括时钟中断)。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - M-mode 中断处理 (包括时钟中断)。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: trap_kernel_init
-    comment:
-      purpose: 初始化trap中各个核心共享的东西。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 初始化trap中各个核心共享的东西。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: trap_kernel_inithart
-    comment:
-      purpose: 初始化trap中各个核心独有的东西。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 初始化trap中各个核心独有的东西。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: trap_kernel_handler
-    comment:
-      purpose: 在kernel_vector()里面调用；内核态trap处理的核心逻辑。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-      - 调用者必须满足源码assert检查的锁、类型或状态条件。
-    post:
-      - 在kernel_vector()里面调用；内核态trap处理的核心逻辑。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-      - 源码断言不成立时触发assert诊断。
-  - name: external_interrupt_handler
-    comment:
-      purpose: 外设中断处理 (基于PLIC，lab-3只需要识别和处理UART中断)。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 外设中断处理 (基于PLIC，lab-3只需要识别和处理UART中断)。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_interrupt_handler
-    comment:
-      purpose: 时钟中断处理 (基于CLINT)。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 时钟中断处理 (基于CLINT)。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_init
-    comment:
-      purpose: 时钟初始化。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 时钟初始化。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_create
-    comment:
-      purpose: 时钟创建。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 时钟创建。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_update
-    comment:
-      purpose: 时钟更新。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 时钟更新。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_get_ticks
-    comment:
-      purpose: 获取滴答数量 (不把sys_timer暴露出去, 只提供安全的访问接口)。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回uint64类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 获取滴答数量 (不把sys_timer暴露出去, 只提供安全的访问接口)。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: timer_wait
-    comment:
-      purpose: 让进程睡眠ntick个时钟周期。
-      input:
-        - ntick（uint64）：等待的时钟滴答数量。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 让进程睡眠ntick个时钟周期。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: plic_init
-    comment:
-      purpose: PLIC初始化。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - PLIC初始化。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: plic_inithart
-    comment:
-      purpose: PLIC核心初始化。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - PLIC核心初始化。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: plic_claim
-    comment:
-      purpose: 获取中断号。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回int类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 获取中断号。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: plic_complete
-    comment:
-      purpose: 确认该中断号对应中断已经完成。
-      input:
-        - irq（int）：中断请求编号。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 确认该中断号对应中断已经完成。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: trap_kernel_init
-    pre:
-      - 内核页表已激活且SIE关闭
-    post:
-      - stvec指向kernel_vector
-    errors:
-      - 入口符号缺失时构建失败
-  - name: timer_interrupt_handler
-    pre:
-      - 当前scause为时钟中断
-    post:
-      - 更新mtimecmp并增加时间滴答
-    errors:
-      - 非法hart编号拒绝写CLINT
-  - name: external_interrupt_handler
-    pre:
-      - 当前scause为S-mode external interrupt
-    post:
-      - PLIC claim、设备处理、complete按顺序完成
-    errors:
-      - 未知IRQ打印诊断并仍完成claim
-properties:
-  - id: frame-symmetry
-    text: 汇编入口保存并恢复被修改的寄存器。
-  - id: serial-input
-    text: UART接收字符经PLIC IRQ 10进入console回显。
+  - src/kernel/trap/method.h
 state:
-  stage: traps
-  owned_state:
-    - stvec、CLINT比较值、PLIC使能和claim状态
-  resource_lifetime:
-    - trap入口和设备配置持续到内核结束
-preconditions:
-  - Lab2已激活kernel_pgtbl
-postconditions:
-  - 时钟和UART事件可被诊断和处理
-invariants:
-  - id: enable-order
-    text: trap向量、PLIC和UART初始化完成后才能开启SIE。
-  - id: claim-completion
-    text: 每个非零claim恰好完成一次。
-dependencies:
-  - kernel/boot
-  - kernel/memory
-  - kernel/lock
-rely:
-  - QEMU CLINT/PLIC/UART寄存器布局
-guarantee:
-  - 为用户trap和调度提供可靠的监督者中断入口
-algorithm_intent: 汇编保存现场，C读取scause并将设备中断路由到具体处理器。
-concurrency:
-  module:
-    module: kernel/trap
-    shared_state:
-      - PLIC状态、UART状态
-    lock_types:
-      - spinlock
-    lock_order: []
-    atomic_sections:
-      - claim到complete
-    interrupt_rules:
-      - 分发期间保持中断关闭
-    rely:
-      - 单hart实验
-    guarantee:
-      - 中断处理不睡眠
-    wait_wakeup_rules: []
-    forbidden_patterns:
-      - 初始化完成前开启SIE
-  operations:
-    external_interrupt_handler:
-      atomicity: one claim-dispatch-complete sequence
+  kernel_trapframe_t: 256字节，依次保存ra/gp/tp/t0/t1/t2/s0/s1/a0至a7/s2至s11/t3至t6/sepc/sstatus；a0偏移64、sepc偏移240、sstatus偏移248。
+  timer_scratch: 每hart独立机器中断暂存区及mtimecmp地址、正数计时间隔；mtime位于0x0200bff8，mtimecmp位于0x02004000加8乘hart编号。
+  sys_ticks: 由ticks_lock保护的uint64共享滴答计数，也是timer_wait的睡眠通道。
+  plic: QEMU virt的PLIC位于0x0c000000；UART中断号10，按hart配置S-mode context。
+rules:
+  - 每hart机器时钟触发监督者软件中断；仅hart0递增sys_ticks，全部hart均可因时钟抢占当前进程。
+  - tick条件检查、进入睡眠与唤醒使用ticks_lock及proc_sleep协议；等待条件以差值比较并循环重查。
+  - 硬中断处理不得调用阻塞等待；完成设备应答且不持自旋锁后才可将当前进程yield至scheduler。
+  - 内核被抢占后的通用寄存器、sepc和sstatus得到恢复；迁移后内核tp仍为当前hart编号。
+functions:
+  "kernel_vector":
+    pre:
+      - 当前已陷入S-mode，内核栈有效。
+    effects:
+      - 保存内核trapframe并调用trap_kernel_handler；恢复返回状态及通用寄存器，维持当前hart的内核tp，执行sret。
+    post:
+      - 从中断前的内核指令继续，即使处理中发生上下文切换也不丢失sepc/sstatus。
+  "timer_vector":
+    pre:
+      - M-mode机器时钟中断，mscratch指向本hart暂存区。
+    effects:
+      - 保存使用到的寄存器，推进本hartmtimecmp并设置SSIP后恢复寄存器和mret。
+    post:
+      - 下一次机器时钟已安排，S-mode可接收软件中断，不调用调度器或睡眠函数。
+  "void trap_kernel_init(void);":
+    pre:
+      - 仅启动hart调用，打印和锁可用，尚未开放设备中断。
+    effects:
+      - 安装本hart内核向量，初始化共享tick与PLIC，启用UART接收中断源。
+    post:
+      - 共享中断状态就绪。
+  "void trap_kernel_inithart(void);":
+    pre:
+      - 全局中断设施就绪，本hart内核页表和栈有效。
+    effects:
+      - 安装kernel_vector，配置本hartPLIC并启用S-mode软件及外部中断。
+    post:
+      - 本hart可接收和处理监督者中断。
+  "void trap_kernel_handler(void);":
+    pre:
+      - 来源为S-mode，中断关闭，kernel_vector已保存返回状态。
+    effects:
+      - 分发设备中断；时钟中断处理结束且存在RUNNING进程时调用proc_yield。
+    post:
+      - 已处理的中断可返回；未知内核异常诊断scause/sepc/stval并panic。
+  "int interrupt_info(void);":
+    effects:
+      - 识别并处理监督者软件或外部中断，清除软件待处理中断位。
+    post:
+      - 时钟返回1，外部中断返回2，非已识别中断返回0。
+  "void external_interrupt_handler(void);":
+    effects:
+      - claim本hart中断号，UART中断调用接收处理，非零已领取中断均complete。
+    post:
+      - 领取0时无设备操作；未知非零设备中断可诊断但必须应答。
+  "void timer_interrupt_handler(void);":
+    effects:
+      - 仅当前hart为0时调用timer_update。
+    post:
+      - 其他hart不改变共享tick。
+  "void timer_init(void);":
+    pre:
+      - 当前处于M-mode，hart编号有效。
+    effects:
+      - 配置本hartmtimecmp、scratch、mtvec及机器定时中断使能。
+    post:
+      - 本hart以选定TIMER_INTERVAL接收机器时钟中断。
+  "void timer_create(void);":
+    pre:
+      - 共享时钟尚未使用，启动hart唯一调用。
+    effects:
+      - 初始化ticks_lock并将sys_ticks置0。
+    post:
+      - tick同步设施可用。
+  "void timer_update(void);":
+    pre:
+      - 由hart0的时钟中断路径调用。
+    effects:
+      - 在ticks_lock下递增sys_ticks并唤醒以其地址为通道的等待者。
+    post:
+      - 此次更新对等待者可见，无丢失唤醒，不睡眠。
+  "uint64 timer_get_ticks(void);":
+    effects:
+      - 持ticks_lock读取sys_ticks。
+    post:
+      - 返回一致的计数快照。
+  "void timer_wait(uint64 ntick);":
+    pre:
+      - 当前是可睡眠进程，未持其他自旋锁；ntick小于2的63次方。
+    effects:
+      - 在ticks_lock下记录起始tick，未达到差值ntick时通过proc_sleep原子释放该锁并等待，唤醒后重查。
+    post:
+      - 达到或超过ntick后返回，已释放ticks_lock；ntick为0立即返回，等待期间其他进程可调度。
+  "void plic_init(void);":
+    effects:
+      - 设置UART中断源的非零优先级。
+    post:
+      - PLIC全局源配置完成。
+  "void plic_inithart(void);":
+    effects:
+      - 在本hart的S-mode context启用UART中断并设置阈值。
+    post:
+      - 本hart可领取UART中断。
+  "int plic_claim(void);":
+    effects:
+      - 读取本hartS-mode claim寄存器。
+    post:
+      - 返回领取的IRQ，0表示无待处理中断。
+  "void plic_complete(int irq);":
+    pre:
+      - irq是本hart已领取的非零IRQ。
+    effects:
+      - 将irq写入本hartS-mode complete寄存器。
+    post:
+      - PLIC可再次投递该设备中断。

@@ -1,19 +1,19 @@
-.section .trampsec,"ax"
-.equ TRAPFRAME_VA, 0x3fffffe000
+.section .trampoline, "ax"
+.balign 4
+.globl trampoline
 .globl user_vector
 .globl user_return
+trampoline:
 user_vector:
-        csrw sscratch, a0
-        li a0, TRAPFRAME_VA
-
-        sd ra, 40(a0)
-        sd sp, 48(a0)
-        sd gp, 56(a0)
-        sd tp, 64(a0)
-        sd t0, 72(a0)
-        sd t1, 80(a0)
-        sd t2, 88(a0)
-        sd s0, 96(a0)
+        csrrw a0, sscratch, a0
+        sd ra,  40(a0)
+        sd sp,  48(a0)
+        sd gp,  56(a0)
+        sd tp,  64(a0)
+        sd t0,  72(a0)
+        sd t1,  80(a0)
+        sd t2,  88(a0)
+        sd s0,  96(a0)
         sd s1, 104(a0)
         sd a1, 120(a0)
         sd a2, 128(a0)
@@ -36,33 +36,35 @@ user_vector:
         sd t4, 264(a0)
         sd t5, 272(a0)
         sd t6, 280(a0)
-
         csrr t0, sscratch
         sd t0, 112(a0)
 
-        ld sp, 8(a0)
+        ld sp,  8(a0)
         ld tp, 32(a0)
         ld t0, 16(a0)
-        ld t1, 0(a0)
+        ld t1,  0(a0)
         sfence.vma zero, zero
         csrw satp, t1
         sfence.vma zero, zero
+        fence.i
         jr t0
 
+.balign 4
 user_return:
         sfence.vma zero, zero
         csrw satp, a1
         sfence.vma zero, zero
+        fence.i
+        csrw sscratch, a0
 
-        li a0, TRAPFRAME_VA
-        ld ra, 40(a0)
-        ld sp, 48(a0)
-        ld gp, 56(a0)
-        ld tp, 64(a0)
-        ld t0, 72(a0)
-        ld t1, 80(a0)
-        ld t2, 88(a0)
-        ld s0, 96(a0)
+        ld ra,  40(a0)
+        ld sp,  48(a0)
+        ld gp,  56(a0)
+        ld tp,  64(a0)
+        ld t0,  72(a0)
+        ld t1,  80(a0)
+        ld t2,  88(a0)
+        ld s0,  96(a0)
         ld s1, 104(a0)
         ld a1, 120(a0)
         ld a2, 128(a0)

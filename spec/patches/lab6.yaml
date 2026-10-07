@@ -1,93 +1,20 @@
-id: lab6-process-scheduling
-transition: lab5 -> lab6
-reason: 将单进程用户实验扩展为可抢占的多进程系统。
+lab: lab6
+goal: 从单进程扩展为可抢占的多进程；学生用契约表达状态、锁交接、资源生命周期和失败行为，再据生成结果修正规格。
+requires:
+  - Lab5内存、用户复制、系统调用和用户trap契约。
+  - 运行环境支持构建并启动1/2 hart的QEMU virt。
 changes:
-- kernel/process
-- kernel/sleep-timer
-- kernel/usertrap
-- kernel/syscall
-- kernel/memory
-- kernel/trap
-required_updates:
-- target: main
-  module: kernel/boot
-  change: 将直接运行首个进程改为初始化进程表后进入scheduler。
-  reason: 系统从单进程直接切换扩展为多进程调度。
-- target: kvm_init
-  module: kernel/memory
-  change: 由只映射KSTACK(0)改为为整个进程表准备独立内核栈映射。
-  reason: 每个可调度进程都必须拥有隔离的内核栈。
-- target: proc_make_first
-  module: kernel/process
-  change: 通过通用进程分配流程创建首个进程，将其置为RUNNABLE，不再直接切换到用户态。
-  reason: 首个进程必须进入与其他进程一致的调度状态机。
-- target: timer_update
-  module: kernel/sleep-timer
-  change: 时钟递增后唤醒等待对应tick条件的睡眠进程。
-  reason: sleep系统调用需要由时钟中断驱动唤醒。
-- target: trap_kernel_handler、trap_user_handler
-  module: kernel/trap
-  change: 在时钟中断路径中触发proc_yield，并保存恢复被抢占上下文所需的状态。
-  reason: 内核态和用户态执行都必须能被时钟抢占。
-- target: proc_t、cpu_t
-  module: kernel/process
-  change: 把单进程状态扩展为受锁保护的进程表项，加入pid、调度状态、父子关系、退出码、睡眠通道和上下文；CPU状态加入调度器上下文。
-  reason: scheduler、fork、wait、exit和sleep/wakeup需要共享明确的生命周期状态与上下文所有权。
-- target: syscall、syscall_num
-  module: kernel/syscall
-  change: 将分发表扩展为fork、wait、exit、sleep和getpid等生命周期调用，并同步内核声明、调用号上界和用户侧编号。
-  reason: 新增进程函数只有通过稳定的系统调用ABI才能由用户进程驱动。
-new_invariants:
-- 每个进程拥有独立内核栈
-- 时钟中断可在用户态和内核态触发yield
-- exit资源由wait回收
-- 进程状态、父子关系和睡眠通道的修改必须在对应进程锁保护下完成
-- 进入SLEEPING与释放调用者外锁必须构成不可丢失唤醒的原子过程
-- 系统调用分发表的上界必须覆盖当前阶段全部有效调用号
-verification:
-- id: pid-and-user-output
-  entry: initcode test-1
-  setup:
-  - 选择SYS_getpid和SYS_print_str场景重新生成initcode。
-  steps:
-  - 启动首个进程并查询pid。
-  - 当pid为1时分两次输出hello world。
-  expected:
-  - 首进程pid为1。
-  - 两次用户字符串输出拼接为完整消息。
-  - 系统调用返回后进程继续运行。
-- id: fork-process-count
-  entry: initcode test-2
-  setup:
-  - 选择连续两次fork场景。
-  steps:
-  - 输出level-1后fork。
-  - 所有进程输出level-2并再次fork。
-  - 所有最终进程输出level-3。
-  expected:
-  - level-1出现1次、level-2出现2次、level-3出现4次。
-  - 每个子进程首次返回值为0，父进程获得正pid。
-  - 调度期间无进程锁或内核栈错误。
-- id: fork-wait-exit-address-space
-  entry: initcode test-3
-  setup:
-  - 选择综合fork/wait/exit场景并准备heap、stack、mmap三类字符串。
-  steps:
-  - fork后由子进程读取并输出三类地址空间内容，然后以1234退出。
-  - 父进程wait并读取退出码。
-  expected:
-  - 子进程看到MMAP_REGION、HEAP_REGION和STACK_REGION，说明地址空间复制完整。
-  - 父进程得到子pid和退出码1234并输出good boy。
-  - 子进程资源只在wait回收后释放。
-- id: sleep-and-wakeup
-  entry: initcode test-4
-  setup:
-  - 选择sleep场景。
-  steps:
-  - 子进程输出Ready to sleep并睡眠30 ticks。
-  - 父进程wait。
-  - 时钟达到条件后子进程输出Ready to exit并退出。
-  expected:
-  - Ready to exit不会早于约30个tick出现。
-  - 父进程最终输出Child exit。
-  - 睡眠期间CPU可调度其他RUNNABLE进程且不存在丢失唤醒。
+  - process建立进程表、上下文、fork/exit/wait和sleep/wakeup；首进程进入RUNNABLE，每hart运行scheduler。
+  - lock使用cpu_t.noff/intena管理每hart中断嵌套，与proc_sched的锁交接一致；sleeplock独立负责可睡眠互斥。
+  - memory为每个进程槽准备独立内核栈及guard page。
+  - trap承担tick等待和时钟唤醒，kernel/user中断路径支持安全抢占；syscall和user采用本阶段编号。
+  - boot发布共享初始化完成状态；toolchain显式保证入口与布局，不依赖编译优化偶然排列。
+acceptance:
+  - 首进程getpid返回1；在1和2 hart下都能进入用户态并输出完整字符串，其他启用hart可调度。
+  - 连续两次fork的level-1/2/3输出分别出现1/2/4次；同一进程不在两个hart同时运行。
+  - fork复制heap/stack/mmap数据且父子修改互不影响；子exit(1234)后父wait得到子pid与1234，槽和资源可复用。
+  - wait没有子进程返回-1；wait(0)正常回收；非法退出码地址返回-1后仍能使用合法地址回收同一子进程。
+  - 子进程sleep(30)达到至少30个共享tick后才继续；父wait最终返回，其他可运行进程在等待期间继续运行，无丢失唤醒。
+  - 睡眠锁竞争者阻塞等待，持有者释放后可继续竞争，非持有者不被视为拥有锁。
+  - 非法系统调用返回-1；非法用户访问使违规进程以失败状态退出，其他进程继续运行；首进程故障按design的保留ZOMBIE规则处理。
+  - 分配失败或无空闲槽时fork返回-1，不发布不完整子进程；正常用户错误不造成全局panic。

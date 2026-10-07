@@ -1,86 +1,39 @@
-id: kernel/boot
 module: kernel/boot
-purpose: 建立可运行的RV64内核入口并从机器模式进入监督者模式。
 owns:
   - src/kernel/boot/entry.S
   - src/kernel/boot/start.c
-  - kernel.ld
   - src/kernel/main.c
-functions:
-  - name: _entry
-    comment:
-      purpose: 'kernel.ld 将_entry作为整个OS的起点放置到0x80000000处；qemu会自动跳转到0x80000000处并开始执行；注意: 此时是M-mode。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 'kernel.ld 将_entry作为整个OS的起点放置到0x80000000处；qemu会自动跳转到0x80000000处并开始执行；注意: 此时是M-mode。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: start
-    comment:
-      purpose: 实现start在当前模块中的代码行为。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 实现start在当前模块中的代码行为。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: main
-    comment:
-      purpose: 执行该程序或内核阶段的主流程，实现main对应的模块行为。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回int类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 执行该程序或内核阶段的主流程，实现main对应的模块行为。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-interface:
-  - name: machine_entry
-    pre:
-      - QEMU从链接地址进入机器模式
-    post:
-      - 设置早期栈并调用start
-    errors:
-      - 入口地址或栈布局错误导致启动失败
-  - name: supervisor_handoff
-    pre:
-      - PMP已允许监督者访问内核镜像
-    post:
-      - mret后main在S-mode执行
-    errors:
-      - 缺少PMP配置时发生指令或数据访问异常
-properties:
-  - id: pmp-before-mret
-    text: start在mret前设置pmpaddr0和pmpcfg0，赋予监督者读写执行权限。
-errors:
-  - 启动失败必须保留QEMU原始诊断
 state:
-  stage: early-boot
-  owned_state:
-    - boot hart早期栈
-    - mstatus/mepc/PMP寄存器
-  resource_lifetime:
-    - 早期栈持续到内核生命周期结束
-preconditions:
-  - PATH中存在可用RV64工具链
-postconditions:
-  - main开始执行并能够访问UART
-invariants:
-  - id: single-boot-hart
-    text: 只有hart 0进入当前实验主流程。
-dependencies:
-  - toolchain
-rely:
-  - QEMU virt的启动地址和PMP实现
-guarantee:
-  - 为lib和后续实验提供监督者执行环境
-algorithm_intent: 使用entry.S设置栈，start配置PMP并通过mret切换特权级。
+  boot_stacks: 每个启用hart有独立、16字节对齐且至少一页的早期栈。
+  kernel_ready: hart0完成共享初始化后以release发布，其他hart以acquire读取。
+rules:
+  - QEMU virt从0x80000000的_entry进入M-mode；只启用构建选择的hart，其他hart停驻。
+  - hart0初始化共享内存、mmap池、进程表及全局设备状态；每个启用hart独立安装内核页表、中断入口并进入scheduler。
+  - 共享初始化失败使内核无法启动时panic；普通用户错误不走启动失败路径。
+functions:
+  "_entry":
+    pre:
+      - M-mode，mhartid有效，镜像已装入物理启动地址。
+    effects:
+      - 按hart选择早期栈后调用start；未启用hart停驻。
+    post:
+      - 启用hart以独立栈进入start；不会使用另一hart的栈。
+  "void start(void);":
+    pre:
+      - 当前处于M-mode且早期栈有效。
+    effects:
+      - 设置PMP允许S-mode访问RAM和设备，委派异常和中断，初始化机器时钟，设置tp为hart编号；准备mepc为main及MPP为S，关闭分页后mret。
+    post:
+      - main在S-mode运行；S-mode trap入口建立前不启用全局监督者中断。
+  "void init(void);":
+    pre:
+      - 仅hart0调用，尚未发布kernel_ready，未持锁。
+    effects:
+      - 初始化打印、物理内存、内核页表、mmap池、进程表。
+    post:
+      - 共享基础设施可用，或因无法完成必要初始化而panic。
+  "int main(void);":
+    effects:
+      - hart0完成共享初始化和首进程创建后发布kernel_ready；其他hart等待发布；每hart安装本地页表和trap入口并进入proc_scheduler。
+    post:
+      - 每个启用hart持续调度；首进程通过RUNNABLE状态进入调度流程，本函数不正常返回。

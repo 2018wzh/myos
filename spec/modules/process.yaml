@@ -1,317 +1,151 @@
-id: kernel/process
 module: kernel/process
-purpose: 管理多进程生命周期、调度、上下文切换及父子资源关系。
 owns:
-  - src/kernel/proc/proc.c
-  - src/kernel/proc/swtch.S
-  - src/kernel/proc/type.h
-  - src/kernel/proc/method.h
-functions:
-  - name: alloc_pid
-    comment:
-      purpose: 获取一个pid。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回int类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-      - 调用者必须满足源码assert检查的锁、类型或状态条件。
-    post:
-      - 获取一个pid。
-    errors:
-      - 源码断言不成立时触发assert诊断。
-  - name: proc_return
-    comment:
-      purpose: 释放进程锁 + trap_user_return。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 释放进程锁 + trap_user_return。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_init
-    comment:
-      purpose: 进程模块初始化。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 进程模块初始化。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_alloc
-    comment:
-      purpose: 申请一个UNUSED进程结构体(返回时带锁)；并执行通用的初始化逻辑。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 申请一个UNUSED进程结构体(返回时带锁)。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 申请一个UNUSED进程结构体(返回时带锁)；并执行通用的初始化逻辑。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: proc_free
-    comment:
-      purpose: '回收一个进程结构体并释放它包含的资源；tips: 调用者需要持有进程锁。'
-      input:
-        - p（proc_t *）：目标进程或上下文对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - '回收一个进程结构体并释放它包含的资源；tips: 调用者需要持有进程锁。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_pgtbl_init
-    comment:
-      purpose: '获得一个初始化过的用户页表；完成trapframe和trampoline的映射；参考 xv6: kernel/proc.c proc_pagetable()。'
-      input:
-        - trapframe（uint64）：proc_pgtbl_init使用的trapframe参数。
-      output: 返回pgtbl_t类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - '获得一个初始化过的用户页表；完成trapframe和trampoline的映射；参考 xv6: kernel/proc.c proc_pagetable()。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_make_first
-    comment:
-      purpose: '第一个用户态进程的创建；它的代码和数据位于initcode.h的initcode数组；第一个进程的用户地址空间布局:；trapoline   (1 page)；trapframe   (1 page)；ustack      (1
-        page)；.......；<--heap_top；code + data (1 page)；empty space (1 page) 最低的4096字节 不分配物理页，同时不可访问；注意: 用用户空间的地址映射需要标记 PTE_U；完成首进程上下文初始化后，proc_make_first直接调用swtch切换到新进程；参考
-        xv6: kernel/proc.c userinit() + allocproc()。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-      - 调用者必须满足源码assert检查的锁、类型或状态条件。
-    post:
-      - '第一个用户态进程的创建；它的代码和数据位于initcode.h的initcode数组；第一个进程的用户地址空间布局:；trapoline   (1 page)；trapframe   (1 page)；ustack      (1
-        page)；.......；<--heap_top；code + data (1 page)；empty space (1 page) 最低的4096字节 不分配物理页，同时不可访问；注意: 用用户空间的地址映射需要标记 PTE_U；参考
-        xv6: kernel/proc.c userinit() + allocproc()。'
-    errors:
-      - 源码断言不成立时触发assert诊断。
-  - name: proc_fork
-    comment:
-      purpose: 父进程产生子进程；UNUSED -> RUNNABLE。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 返回int类型的状态值或计算结果；具体取值由源码中的返回分支定义。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 父进程产生子进程；UNUSED -> RUNNABLE。
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: proc_yield
-    comment:
-      purpose: 进程主动放弃CPU控制权；RUNNING->RUNNABLE。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 进程主动放弃CPU控制权；RUNNING->RUNNABLE。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_reparent
-    comment:
-      purpose: 当父进程退出时, 让它的所有子进程认proczero为父；因为proczero永不退出, 可以回收子进程的资源。
-      input:
-        - parent（proc_t *）：proc_reparent使用的parent参数。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 当父进程退出时, 让它的所有子进程认proczero为父；因为proczero永不退出, 可以回收子进程的资源。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_try_wakeup
-    comment:
-      purpose: '唤醒等待呼叫的进程；由proc_exit调用；tips: 调用者需要持有parent->lk。'
-      input:
-        - p（proc_t *）：目标进程或上下文对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - '唤醒等待呼叫的进程；由proc_exit调用；tips: 调用者需要持有parent->lk。'
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_exit
-    comment:
-      purpose: 进程退出；RUNNING -> ZOMBIE。
-      input:
-        - exit_code（int）：proc_exit使用的exit_code参数。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 进程退出；RUNNING -> ZOMBIE。
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-  - name: proc_wait
-    comment:
-      purpose: '父进程等待一个子进程进入ZOMBIE状态；1. 如果等到: 释放子进程, 返回子进程的pid, 将子进程的退出状态传出到user_addr；2. 如果发现没孩子: 返回-1；3. 如果没等到: 父进程进入睡眠状态。'
-      input:
-        - user_addr（uint64）：目标地址。
-      output: '1. 如果等到: 释放子进程, 返回子进程的pid, 将子进程的退出状态传出到user_addr；2. 如果发现没孩子: 返回-1。'
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - '父进程等待一个子进程进入ZOMBIE状态；1. 如果等到: 释放子进程, 返回子进程的pid, 将子进程的退出状态传出到user_addr；2. 如果发现没孩子: 返回-1；3. 如果没等到: 父进程进入睡眠状态。'
-    errors:
-      - 可恢复失败按源码约定返回空值、零或负值。
-  - name: proc_sleep
-    comment:
-      purpose: 进程等待sleep_space对应的资源, 进入睡眠状态；RUNNING -> SLEEPING。
-      input:
-        - sleep_space（void *）：proc_sleep使用的sleep_space参数。
-        - lock（spinlock_t *）：待操作的锁对象。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 进程等待sleep_space对应的资源, 进入睡眠状态；RUNNING -> SLEEPING。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_wakeup
-    comment:
-      purpose: 唤醒所有等待sleep_space的进程；SLEEPING -> RUNNABLE。
-      input:
-        - sleep_space（void *）：proc_wakeup使用的sleep_space参数。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - 唤醒所有等待sleep_space的进程；SLEEPING -> RUNNABLE。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: proc_sched
-    comment:
-      purpose: '用户进程切换到调度器；tips: 调用者保证持有当前进程的锁。'
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - '用户进程切换到调度器；tips: 调用者保证持有当前进程的锁。'
-    errors:
-      - 检测到不可恢复的非法状态或资源错误时，源码会调用panic终止当前执行流。
-  - name: proc_scheduler
-    comment:
-      purpose: 调度器；RUNNABLE->RUNNING。
-      input:
-        - 无显式参数；函数依赖当前CPU、进程或模块全局状态。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 调用时必须满足模块初始化顺序和当前执行上下文要求。
-    post:
-      - 调度器；RUNNABLE->RUNNING。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-  - name: swtch
-    comment:
-      purpose: context上下文切换。
-      input:
-        - old（context_t *）：需要保存的旧上下文。
-        - new（context_t *）：需要恢复的新上下文。
-      output: 无直接返回值；通过修改模块状态、寄存器、内存或输出参数产生结果。
-    pre:
-      - 输入参数必须满足源码中的指针有效性、地址范围、长度和对象状态约束。
-    post:
-      - context上下文切换。
-    errors:
-      - 源码未定义独立错误返回；调用者需满足前置条件并处理下游调用的失败语义。
-interface:
-  - name: proc_alloc
-    pre:
-      - 进程槽位和物理页可用
-    post:
-      - 创建持锁的EMBRYO进程
-    errors:
-      - 资源不足返回失败并回收临时资源
-  - name: proc_fork
-    pre:
-      - 当前进程可复制
-    post:
-      - 子进程拥有私有地址空间且a0为0
-    errors:
-      - 中途失败不发布半成品子进程
-  - name: proc_exit/proc_wait
-    pre:
-      - 进程处于可退出/等待状态
-    post:
-      - 父子关系和资源回收完成
-    errors:
-      - 无子进程返回-1，exit不可返回
-  - name: proc_scheduler
-    pre:
-      - 每个hart已有scheduler context
-    post:
-      - 循环运行RUNNABLE进程
-    errors:
-      - 状态/锁不一致时停止并诊断
-properties:
-  - id: state-machine
-    text: UNUSED/EMBRYO/SLEEPING/RUNNABLE/RUNNING/ZOMBIE状态转换受锁保护。
-  - id: context-symmetry
-    text: swtch只保存和恢复callee-saved上下文。
+- src/kernel/proc/proc.c
+- src/kernel/proc/swtch.S
+- src/kernel/proc/type.h
+- src/kernel/proc/method.h
 state:
-  stage: multiprocess
-  owned_state:
-    - proc_list、pid、父子链、调度器context
-  resource_lifetime:
-    - exit后由wait回收页表、trapframe、mmap和文件资源
-preconditions:
-  - Lab5用户地址空间已可复制
-postconditions:
-  - 多个进程可被抢占并最终回收
-invariants:
-  - id: sleep-atomicity
-    text: 睡眠前原子释放外锁并设置SLEEPING。
-  - id: no-zombie-leak
-    text: ZOMBIE资源只由wait统一释放。
-dependencies:
-  - kernel/uvm
-  - kernel/usertrap
-  - kernel/lock
-  - kernel/timer
-  - user/initcode
-rely:
-  - 时钟中断和swtch ABI
-guarantee:
-  - 向后续文件系统提供当前进程资源容器
-algorithm_intent: 采用xv6风格状态扫描调度，proc_sleep/proc_wakeup实现条件同步。
-concurrency:
-  module:
-    module: kernel/process
-    shared_state:
-      - proc_list、pid计数
-    lock_types:
-      - spinlock
-    lock_order:
-      - 父子锁按既定顺序
-    atomic_sections:
-      - 状态转换
-    interrupt_rules:
-      - sched前关闭中断
-    rely:
-      - 每hart调度器
-    guarantee:
-      - 不重复运行同一进程
-    wait_wakeup_rules:
-      - sleep与wakeup按sleep_space匹配
-    forbidden_patterns:
-      - 持proc锁调用swtch后再访问不变量
-  operations:
-    proc_sched:
-      atomicity: one locked context switch
+  proc_list: NPROC个进程槽；UNUSED、EMBRYO、SLEEPING、RUNNABLE、RUNNING、ZOMBIE状态由各自proc.lock保护。
+  proc_t: 包含lock、state、pid、parent、exit_code、sleep_space、kstack、pgtbl、trapframe、heap_top、ustack_npage、mmap、context、name。
+  cpus: 每hart的cpu_t含当前proc、scheduler上下文、noff中断关闭嵌套数和intena最外层关闭前的使能状态。
+  context_t: 按ra、sp、s0至s11顺序存放14个uint64，与swtch的保存恢复布局一致。
+  user_trapframe_t: 36个uint64依次为kernel_satp、kernel_sp、kernel_trap、epc、kernel_hartid、ra、sp、gp、tp、t0、t1、t2、s0、s1、a0至a7、s2至s11、t3至t6；与trampoline偏移一致。
+  pid_lock: 保护单调分配的pid，首个pid为1。
+  wait_lock: 保护parent关系和wait检查条件至睡眠的同步；其锁序早于任意进程锁。
+  proczero: 首进程及孤儿收养者；正常实验流程持续运行并回收子进程，若死亡则保留ZOMBIE槽直到重启。
+rules:
+- 一个进程至多在一个hart上RUNNING；每个进程槽拥有独立的一页内核栈及相邻不可访问的guard page。
+- EMBRYO尚不可调度；地址空间、trapframe、父子关系完整后才能发布为RUNNABLE。
+- 需要同时持有wait_lock和进程锁时，必须先获取wait_lock；不得持进程锁等待wait_lock。
+- scheduler与被调度进程跨swtch交接同一进程锁；重新运行的进程按当前hart恢复中断记账，不假定仍在原hart。
+- cpus.noff/intena由lock模块维护；proc_init不得在已有中断嵌套或持锁期间清零它们。
+- 进程退出只发布ZOMBIE；wait负责释放用户页、页表页、trapframe和mmap节点，内核栈保留给进程槽复用。
+functions:
+  cpu_t *mycpu(void);:
+    pre:
+    - 当前hart的tp包含有效hart编号；调用者关闭中断以避免使用期间迁移。
+    effects:
+    - 读取当前hart编号。
+    post:
+    - 返回对应cpu_t；非法编号属于内核错误并panic。
+  proc_t *myproc(void);:
+    effects:
+    - 在临时关闭中断的保护下读取当前hart的proc并恢复原中断嵌套。
+    post:
+    - 返回当前进程；scheduler无当前进程时返回NULL。
+  void proc_init(void);:
+    pre:
+    - 尚未开始调度；当前没有持锁或未配对的push_off。
+    effects:
+    - 初始化pid_lock、wait_lock、进程锁和进程槽；设置每槽KSTACK；初始化各hart调度状态。
+    post:
+    - 全部槽为UNUSED，pid从1开始；已有早期启动中断状态不被破坏。
+  pgtbl_t proc_pgtbl_init(uint64 trapframe);:
+    pre:
+    - trapframe是调用者拥有的有效物理页。
+    effects:
+    - 创建空用户页表，映射共享TRAMPOLINE为RX、私有TRAPFRAME为RW，均不含PTE_U。
+    post:
+    - 成功返回页表；资源不足返回NULL并释放本次页表资源，不释放调用者trapframe或共享trampoline。
+  proc_t *proc_alloc(void);:
+    effects:
+    - 占用空槽并建立pid、trapframe、基础页表和首次运行上下文；上下文入口为proc_return，栈顶为kstack加PAGE_SIZE。
+    post:
+    - 成功返回持有该进程锁的EMBRYO；无空槽或分配失败返回NULL，回收本次资源并恢复槽为UNUSED，无遗留锁。
+  void proc_free(proc_t *p);:
+    pre:
+    - 持有p的进程锁；p是未发布的失败进程或由wait选中的ZOMBIE，已不在运行。
+    effects:
+    - 释放p拥有的地址空间、trapframe和mmap节点，清除生命周期字段。
+    post:
+    - 槽恢复UNUSED；进程锁及预留内核栈仍有效，调用者仍持进程锁。
+  void proc_make_first(void);:
+    pre:
+    - 内存、mmap池及进程表就绪，initcode长度在1至PAGE_SIZE之间。
+    effects:
+    - 建立首进程代码页、用户栈页及初始heap/stack元数据，epc为USER_BASE，sp为USER_STACK_TOP；设置proczero。
+    post:
+    - 成功时首进程pid为1且为RUNNABLE，锁已释放；不直接切换用户态。
+    - 资源不足时释放本次资源、恢复空槽并返回，proczero保持NULL；调度器可继续等待中断，不panic。
+  void proc_return(void) __attribute__((noreturn));:
+    pre:
+    - scheduler首次切入当前进程，并交接该进程锁。
+    effects:
+    - 释放进程锁并调用trap_user_return。
+    post:
+    - 进入用户态，不返回。
+  int proc_fork(void);:
+    pre:
+    - 当前存在RUNNING进程。
+    effects:
+    - 复制用户页表、heap/stack/mmap元数据和trapframe；建立父子关系。
+    post:
+    - 成功发布独立物理页的RUNNABLE子进程，父返回子pid，子a0为0；失败返回-1并回收未发布子进程的全部资源。
+  void proc_yield(void);:
+    effects:
+    - 若有当前进程，将其置RUNNABLE并交回scheduler。
+    post:
+    - 再获调度时返回且不持进程锁；无当前进程时无操作。
+  void proc_sched(void);:
+    pre:
+    - 持当前进程锁且只持这一把自旋锁；noff等于1，中断关闭，当前状态不是RUNNING。
+    effects:
+    - 保存当前intena，切换进程context至本hart scheduler；恢复运行后恢复该执行流的intena。
+    post:
+    - 再获调度才返回，仍持进程锁且中断关闭；允许迁移hart，错误锁/状态/嵌套条件panic。
+  void proc_scheduler(void) __attribute__((noreturn));:
+    pre:
+    - 本hart内核页表及trap入口已安装，进程表就绪。
+    effects:
+    - 开中断后循环扫描RUNNABLE进程，持其锁改为RUNNING，设置本hart proc并切换上下文；返回调度器后清除proc并解锁。
+    post:
+    - 持续调度且不返回；无可运行进程时仍允许中断。
+  swtch:
+    pre:
+    - a0是旧context_t地址，a1是新context_t地址；新上下文及栈有效。
+    effects:
+    - 保存旧ra/sp/s0至s11，恢复新ra/sp/s0至s11并转移控制。
+    post:
+    - 在新上下文继续执行；不保存caller-saved寄存器，不改页表和hart标识。
+  void proc_sleep(void *sleep_space, spinlock_t *lock);:
+    pre:
+    - 当前进程可睡眠，调用者持有lock；除该外锁外没有其他自旋锁。
+    effects:
+    - 用当前进程锁接管同步后释放外锁，设置通道及SLEEPING并调度；唤醒后清除通道并重新取得外锁。
+    post:
+    - 返回时仍持有传入lock；释放外锁与发布睡眠状态不产生丢失唤醒窗口；若lock就是进程锁，只保留这一把锁，不重复获取。
+  void proc_wakeup(void *sleep_space);:
+    pre:
+    - 调用者不持任何将被扫描的进程锁；与条件修改使用同一同步协议。
+    effects:
+    - 持各进程锁检查通道，将所有匹配的SLEEPING进程置RUNNABLE。
+    post:
+    - 不匹配的进程不变；不直接运行被唤醒进程，也不睡眠。
+  void proc_try_wakeup(proc_t *p);:
+    pre:
+    - 持p的进程锁，调用者已确定p是需要唤醒的等待父进程。
+    effects:
+    - 若p为SLEEPING则置RUNNABLE。
+    post:
+    - 其他状态不变，调用者仍持锁。
+  void proc_reparent(proc_t *parent);:
+    pre:
+    - 持wait_lock，不持子进程锁。
+    effects:
+    - 将非首进程parent的子进程交给proczero，并唤醒需要回收孤儿的proczero；parent为proczero时保留既有收养关系。
+    post:
+    - parent不为proczero时，不再有进程以parent为父；退出中的子进程仍可由新父进程回收。
+  void proc_exit(int exit_code) __attribute__((noreturn));:
+    pre:
+    - 当前存在进程。
+    effects:
+    - 在wait同步下收养子进程、保存退出码、唤醒父进程并置ZOMBIE，交回scheduler。
+    post:
+    - 不返回，不自行释放仍待父进程回收的资源；首进程同样可退出，但其ZOMBIE槽保留到重启且仍为孤儿收养目标，其他进程继续调度。
+  int proc_wait(uint64 user_addr);:
+    pre:
+    - 当前存在进程。
+    effects:
+    - 在wait_lock保护下检查子进程；有ZOMBIE时可复制退出码并回收，无已退出子进程时原子睡眠后重查。
+    post:
+    - 回收成功返回子pid；无子进程返回-1；user_addr为0跳过状态复制，非0地址不可写时返回-1并保留该ZOMBIE供重试。

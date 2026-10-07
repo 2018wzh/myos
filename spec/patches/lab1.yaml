@@ -1,34 +1,25 @@
-id: lab1-machine-boot
-transition: initial -> lab1
-reason: 第一个实验建立从QEMU启动到监督者模式打印的最小闭环。
+lab: 1
+goal: 第一个实验建立从QEMU启动到监督者模式打印的最小闭环。
+requires: initial
 changes:
 - kernel/boot
 - kernel/console
 - kernel/lock
 - toolchain
-required_updates: []
-new_invariants:
-- PMP配置必须发生在mret之前。
-- printf的共享输出必须由自旋锁串行化。
-- build生成的ELF必须使用声明的入口和链接地址。
-verification:
-- id: boot-output-and-order
-  entry: kernel main / test1
-  setup:
+acceptance:
+- scenario: boot-output-and-order
+  input:
   - 使用至少2个hart执行make run。
-  steps:
   - 启动内核，让所有hart进入test1。
   - 记录每个hart的Hello world输出并观察字符是否交错。
   expected:
   - boot hart先完成打印初始化，其他hart在started发布后继续。
   - 每个hart产生一条完整输出，单条printf内容不与其他hart交错。
   - 内核不发生panic或非法指令异常。
-- id: parallel-sum-locking
-  entry: kernel main / test2
-  setup:
+- scenario: parallel-sum-locking
+  input:
   - 将main临时切换为调用test2。
   - 分别准备不保护共享sum和所有hart都使用sum_lk保护两种配置。
-  steps:
   - 每个hart对sum执行100000次递增。
   - 比较无锁与加锁两次运行的最终输出。
   expected:
