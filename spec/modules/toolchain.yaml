@@ -3,7 +3,6 @@ owns:
 - Makefile
 - common.mk
 - kernel.ld
-- user.ld
 state:
   target: 按 HARTS/TIMER_INTERVAL 区分的目标文件与依赖，生成头文件同样位于构建目录，不修改源码树。
 rules:
