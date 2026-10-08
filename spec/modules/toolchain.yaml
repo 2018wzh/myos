@@ -3,14 +3,13 @@ owns:
   - Makefile
   - common.mk
   - kernel.ld
-  - user.ld
 state:
   configuration: HARTS默认2且仅支持1或2；TIMER_INTERVAL为正计时周期；TOOLPREFIX默认riscv64-linux-gnu-，QEMU默认qemu-system-riscv64。
   build_products: BUILD_DIR内配置独立的对象和依赖文件、用户ELF、二进制和initcode.h，以及最终kernel-qemu.elf；生成头文件不写入src树。
   link_layout: RV64内核从0x80000000的_entry进入；trampoline页对齐且不超过PAGE_SIZE；KERNEL_DATA、kernel_end、ALLOC_BEGIN、ALLOC_END描述段与可分配RAM边界。
 rules:
   - 使用POSIX make/sh及RV64GC LP64D freestanding工具链，不依赖宿主标准库；编译和链接失败立即停止。
-  - 根目录user.ld使用户程序在USER_BASE显式建立入口，不能依赖编译器函数排列或特定优化级别偶然把main放在开头。
+  - 根目录kernel.ld分别链接内核和用户镜像，使用户程序在USER_BASE显式建立入口，不能依赖编译器函数排列或特定优化级别偶然把main放在开头。
   - 内核段权限、trampoline布局及用户入口由构建/链接规则保证；不把降低优化级别作为修复错误的手段。
   - 改动用户源码、头文件、配置或链接脚本后，增量构建更新相应产物并重新链接；不同hart配置不得混用旧对象。
 targets:

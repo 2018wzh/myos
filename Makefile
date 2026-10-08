@@ -50,8 +50,8 @@ kernel-qemu.elf: FORCE $(CONFIG_ELF)
 $(CONFIG_ELF): $(OBJS) kernel.ld Makefile common.mk
 	$(LD) $(LDFLAGS) -T kernel.ld -o $@ $(OBJS)
 
-$(USER_ELF): $(USER_OBJ) user.ld Makefile common.mk
-	$(LD) $(LDFLAGS) -T user.ld -o $@ $(USER_OBJ)
+$(USER_ELF): $(USER_OBJ) kernel.ld Makefile common.mk
+	$(LD) $(LDFLAGS) --defsym=USER_IMAGE=1 -e main -T kernel.ld -o $@ $(USER_OBJ)
 
 $(USER_BIN): $(USER_ELF)
 	$(OBJCOPY) -O binary $< $@
