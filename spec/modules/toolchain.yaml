@@ -3,7 +3,6 @@ owns:
   - Makefile
   - common.mk
   - kernel.ld
-  - user.ld
 state:
   构建产物: target内按HARTS和TIMER_INTERVAL区分的内核对象、用户ELF、平坦用户镜像及最终内核ELF；initcode.h位于相应构建目录，由镜像生成。
   构建配置: TOOLPREFIX默认riscv64-linux-gnu-，QEMU默认qemu-system-riscv64，HARTS默认2且仅允许1或2，TIMER_INTERVAL默认1000000。

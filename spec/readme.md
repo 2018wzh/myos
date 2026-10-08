@@ -36,5 +36,3 @@ make clean
 ```
 
 使用 RISC-V GCC/binutils、POSIX make/sh、xxd 和 QEMU。默认两个 hart。运行场景见当前实验 patch 的 acceptance；只运行当前改动相关场景。
-
-功能测试使用 `python tools/test_lab.py --lab 4 --harts 2`（在对应实验分支替换实验号）。运行器临时注入场景、增量编译、运行 QEMU，并在结束时恢复源码；输出不另存日志。

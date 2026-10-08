@@ -3,14 +3,46 @@ owns:
   - src/kernel/boot/entry.S
   - src/kernel/boot/start.c
   - src/kernel/main.c
+  - src/kernel/arch/mod.c
+  - src/kernel/arch/mod.h
+  - src/kernel/arch/method.h
+  - src/kernel/arch/type.h
 state:
   boot_stacks: 每个允许启动hart独立的一页早期栈。
   kernel_ready: hart0完成共享初始化后以release发布，其他hart以acquire等待。
+  mstatus: 机器模式中断、返回特权级及浮点状态控制。
+  mepc: 下一次 mret 的返回地址。
+  mhartid: 硬件 hart 标识，只读。
+  medeleg: 同步异常向监督者模式的委派位。
+  mideleg: 中断向监督者模式的委派位。
+  mie: 机器模式中断源使能位。
+  mtvec: 机器模式 trap 入口和模式。
+  mscratch: 机器模式 trap 使用的暂存值或每 hart scratch 地址。
+  mcounteren: 向较低特权级开放硬件计数器的控制位。
+  pmpcfg0: 第一组物理内存保护条目的属性。
+  pmpaddr0: 第一个物理内存保护条目的地址编码。
+  sstatus: 监督者中断使能、返回状态和前一特权级。
+  sie: 监督者中断源使能位。
+  sip: 监督者 pending 位，部分位由硬件管理。
+  sepc: 下一次 sret 的返回地址。
+  stvec: 监督者 trap 入口和模式。
+  sscratch: 监督者 trap 暂存寄存器。
+  satp: 地址转换模式、ASID 和根页表物理页号。
+  scause: 最近一次监督者 trap 的中断标志及原因。
+  stval: 最近一次监督者异常附加值。
+  time: 平台提供的递增时间计数器。
+  stimecmp: Sstc 平台上的监督者定时器比较值。
+  tp: 内核期间的当前 hart ID；用户期间由用户上下文管理。
 rules:
   - HARTS默认为2，只允许1或2；超出配置的hart停驻，不使用有效hart的栈或cpu记录。
   - 共享初始化仅执行一次，各hart分别安装内核页表和trap向量；共享状态发布前不可由辅助hart使用。
   - hart0在Lab5直接创建并切入proczero，辅助hart留在内核；调度器不属于本阶段。
   - 内核ELF入口是_entry，M-mode的start以mepc设置内核main并mret，不能依赖C函数排列。
+  - HART_COUNT 只允许 1 或 2，默认 2；NCPU 和 MAX_HARTS 与 HART_COUNT 相等，平台启动 hart 数必须与配置一致。
+  - m 开头 CSR 和 PMP 接口在 M 模式调用；s 开头 CSR 接口在 S 或 M 模式调用，stimecmp 还要求平台支持并开放 Sstc。
+  - 写接口只修改所命名寄存器；CSR 的只读位与 WARL 字段遵循硬件约束，调用者提供合法编码。
+  - w_satp 不替调用者执行 sfence.vma；修改地址空间和 TLB 失效必须由上层协议配对。
+  - 内核 tp 保存范围内 hart ID，用户进入内核由 trampoline 恢复，退出时恢复用户 tp；内核调用 w_tp 不得破坏已有每 hart 状态归属。
 functions:
   _entry:
     pre:
@@ -42,3 +74,193 @@ functions:
       - 辅助hart等待kernel_ready，安装本hart页表及trap后停驻。
     post:
       - 正常执行不返回；HARTS=1与HARTS=2均执行同一用户入口路径。
+  "uint64 r_mhartid(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 mhartid 值。"
+  "uint64 r_mstatus(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 mstatus 值。"
+  "uint64 r_sstatus(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 sstatus 值。"
+  "uint64 r_sip(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 sip 值。"
+  "uint64 r_sie(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 sie 值。"
+  "uint64 r_mie(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 mie 值。"
+  "uint64 r_sepc(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 sepc 值。"
+  "uint64 r_medeleg(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 medeleg 值。"
+  "uint64 r_mideleg(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 mideleg 值。"
+  "uint64 r_stvec(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 stvec 值。"
+  "uint64 r_satp(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 satp 值。"
+  "uint64 r_scause(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 scause 值。"
+  "uint64 r_stval(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 stval 值。"
+  "uint64 r_mcounteren(void);":
+    effects: []
+    post:
+      - "返回当前 hart 的 mcounteren 值。"
+  "void w_mstatus(uint64 value);":
+    effects:
+      - "向当前 hart 的 mstatus 写入 value。"
+    post:
+      - "当前 hart 的 mstatus 可写字段按 value 设置。"
+  "void w_mepc(uint64 value);":
+    effects:
+      - "向当前 hart 的 mepc 写入 value。"
+    post:
+      - "当前 hart 的 mepc 可写字段按 value 设置。"
+  "void w_sstatus(uint64 value);":
+    effects:
+      - "向当前 hart 的 sstatus 写入 value。"
+    post:
+      - "当前 hart 的 sstatus 可写字段按 value 设置。"
+  "void w_sip(uint64 value);":
+    effects:
+      - "向当前 hart 的 sip 写入 value。"
+    post:
+      - "当前 hart 的 sip 可写字段按 value 设置。"
+  "void w_sie(uint64 value);":
+    effects:
+      - "向当前 hart 的 sie 写入 value。"
+    post:
+      - "当前 hart 的 sie 可写字段按 value 设置。"
+  "void w_mie(uint64 value);":
+    effects:
+      - "向当前 hart 的 mie 写入 value。"
+    post:
+      - "当前 hart 的 mie 可写字段按 value 设置。"
+  "void w_sepc(uint64 value);":
+    effects:
+      - "向当前 hart 的 sepc 写入 value。"
+    post:
+      - "当前 hart 的 sepc 可写字段按 value 设置。"
+  "void w_medeleg(uint64 value);":
+    effects:
+      - "向当前 hart 的 medeleg 写入 value。"
+    post:
+      - "当前 hart 的 medeleg 可写字段按 value 设置。"
+  "void w_mideleg(uint64 value);":
+    effects:
+      - "向当前 hart 的 mideleg 写入 value。"
+    post:
+      - "当前 hart 的 mideleg 可写字段按 value 设置。"
+  "void w_stvec(uint64 value);":
+    effects:
+      - "向当前 hart 的 stvec 写入 value。"
+    post:
+      - "当前 hart 的 stvec 可写字段按 value 设置。 入口地址和向量模式按硬件编码生效。"
+  "void w_mtvec(uint64 value);":
+    effects:
+      - "向当前 hart 的 mtvec 写入 value。"
+    post:
+      - "当前 hart 的 mtvec 可写字段按 value 设置。 入口地址和向量模式按硬件编码生效。"
+  "void w_satp(uint64 value);":
+    effects:
+      - "向当前 hart 的 satp 写入 value。"
+    post:
+      - "当前 hart 的 satp 可写字段按 value 设置。 只写 CSR，不完成 TLB 失效或其他 hart 的切换。"
+  "void w_sscratch(uint64 value);":
+    effects:
+      - "向当前 hart 的 sscratch 写入 value。"
+    post:
+      - "当前 hart 的 sscratch 可写字段按 value 设置。"
+  "void w_mscratch(uint64 value);":
+    effects:
+      - "向当前 hart 的 mscratch 写入 value。"
+    post:
+      - "当前 hart 的 mscratch 可写字段按 value 设置。"
+  "void w_mcounteren(uint64 value);":
+    effects:
+      - "向当前 hart 的 mcounteren 写入 value。"
+    post:
+      - "当前 hart 的 mcounteren 可写字段按 value 设置。"
+  "void w_pmpcfg0(uint64 value);":
+    effects:
+      - "向当前 hart 的 pmpcfg0 写入 value。"
+    post:
+      - "当前 hart 的 pmpcfg0 可写字段按 value 设置。"
+  "void w_pmpaddr0(uint64 value);":
+    effects:
+      - "向当前 hart 的 pmpaddr0 写入 value。"
+    post:
+      - "当前 hart 的 pmpaddr0 可写字段按 value 设置。"
+  "void w_stimecmp(uint64 value);":
+    effects:
+      - "向当前 hart 的 stimecmp 写入 value。"
+    post:
+      - "当前 hart 的 stimecmp 可写字段按 value 设置。"
+  "uint64 r_time(void);":
+    pre:
+      - "当前特权级已获准读取 time。"
+    effects: []
+    post:
+      - "返回 rdtime 读取的当前 64 位时间计数，不表示系统 tick 数。"
+  "void intr_on(void);":
+    pre:
+      - "当前 hart 不在 push_off 尚未配对退出的区域。"
+    effects:
+      - "置当前 hart 的 SSTATUS.SIE。"
+    post:
+      - "只开启监督者全局中断位，其他 sstatus 位不变；不会开启被 sie 屏蔽的源。"
+  "void intr_off(void);":
+    effects:
+      - "清当前 hart 的 SSTATUS.SIE。"
+    post:
+      - "当前 hart 的监督者全局中断关闭，其他 sstatus 位不变；不关闭 M 模式定时器。"
+  "int intr_get(void);":
+    effects: []
+    post:
+      - "SSTATUS.SIE 置位返回 1，否则返回 0。"
+  "uint64 r_sp(void);":
+    effects: []
+    post:
+      - "返回执行读取指令时当前 hart 的 sp 寄存器值。"
+  "uint64 r_tp(void);":
+    effects: []
+    post:
+      - "返回执行读取指令时当前 hart 的 tp 寄存器值。"
+  "uint64 r_ra(void);":
+    effects: []
+    post:
+      - "返回执行读取指令时当前 hart 的 ra 寄存器值。"
+  "void w_tp(uint64 value);":
+    effects:
+      - "将当前 hart 的 tp 设置为 value。"
+    post:
+      - "后续 tp 读取获得 value。"
+  "void sfence_vma(void);":
+    effects:
+      - "执行 sfence.vma zero, zero，并建立编译器内存屏障。"
+    post:
+      - "当前 hart 的全部地址空间和 ASID 的本地地址转换缓存失效；其他 hart 不受影响。"
